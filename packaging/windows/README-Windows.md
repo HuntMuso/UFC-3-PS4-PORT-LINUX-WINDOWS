@@ -18,7 +18,7 @@ your own dump of the game and its 1.14 update.
 ## Playing
 
 1. Extract the archive anywhere (not inside the game folder).
-2. Run **`UFC3.exe`**, pick the `CUSA06534` folder with **Browse...**, press **Play**.
+2. Run **`UFC3.exe`** (it opens the modern launcher, no console window), pick the `CUSA06534` folder with **Browse...**, press **Play**. `UFC3.exe --classic` opens the old window.
 3. The first start prepares the game for a few seconds. Data, saves and logs live in
    `%LOCALAPPDATA%\UFC3Native`.
 
