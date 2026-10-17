@@ -87,6 +87,12 @@ cp "$root/downloads/aerolib.inl" "$stage/share/aerolib.inl"
 cp share/skip_movie.mkv "$stage/share/skip_movie.mkv"
 cp LICENSE "$stage/LICENSE"; cp "$root/bin/VERSION" "$stage/VERSION"
 cp packaging/windows/README-Windows.md "$stage/README-Windows.md"
+# Modern launcher (UFC3-Launcher.cmd): the Python UI and the Steam shortcut helper it imports.
+mkdir -p "$stage/launcher/modern/ui"
+cp launcher/modern/ufc3_modern_launcher.py "$stage/launcher/modern/"
+cp launcher/modern/ui/index.html "$stage/launcher/modern/ui/"
+cp launcher/steam_shortcuts.py "$stage/launcher/"
+cp packaging/windows/UFC3-Launcher.cmd "$stage/UFC3-Launcher.cmd"
 # Licences of what is in the archive.
 cp gpu/third_party/imgui/LICENSE.txt "$stage/licenses/Dear-ImGui-LICENSE.txt"
 cp third_party/LibAtrac9/LICENSE "$stage/licenses/LibAtrac9-LICENSE.txt" 2>/dev/null || cp third_party/LibAtrac9/LICENSE.md "$stage/licenses/LibAtrac9-LICENSE.md" 2>/dev/null || true
