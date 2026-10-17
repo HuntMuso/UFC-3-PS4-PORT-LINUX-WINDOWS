@@ -15,19 +15,20 @@ used on the same install. On Windows, Play runs the existing `UFC3.exe --play` (
 pipeline is untouched); on Linux it uses `launcher/ufc3_online.py` like the GTK launcher.
 
 ## Install
-Copy `launcher/modern/`, `packaging/windows/UFC3-Launcher.cmd` and `tests/test_modern_launcher.py` into the
-fork. Package `launcher\modern\` next to `UFC3.exe` and `UFC3-Launcher.cmd` at the package root.
+Copy `launcher/modern/` and `tests/test_modern_launcher.py` into the fork. Package `launcher\modern\` next to
+`UFC3.exe`: `UFC3.exe` opens the modern launcher itself (bundled `pythonw.exe`, no console, no `.cmd`);
+`UFC3.exe --classic` opens the old Win32 window.
 Linux: `launcher/modern/ufc3-modern-launcher.sh`. Headless check: `--no-window` prints the local URL.
 
-## DLSS 4 (replaces nothing until the engine has it)
-The option is a card in Video -> Upscaling. It is unlocked only when ALL of these hold:
-1. an NVIDIA GeForce RTX GPU is present (AMD, Intel, GTX: greyed out with the reason shown);
-2. `share/engine-features.json` contains `{"dlss4": true}` (written by an engine build that has the module);
-3. `nvngx_dlss.dll` is in `bin\`;
-4. the crash guard is not tripped.
-Until the engine implements DLSS, check 2 fails and the card stays locked, so a selection can never reach an
-engine that cannot honour it. If a saved DLSS choice becomes unavailable (GPU swap, guard), the game runs with
-FSR 1.0 and the UI says so.
+## DLSS 4
+The option is a card in Video -> Upscaling. It is open on any NVIDIA GeForce RTX GPU (AMD, Intel and GTX stay
+greyed out with the reason shown) unless the crash guard tripped.
+
+`nvngx_dlss.dll` is packaged in `bin\` (fetched from NVIDIA's DLSS SDK repository by the CI build).
+The game engine has no DLSS module yet (`share/engine-features.json` with `{"dlss4": true}` is written by an
+engine build that has it), so until then a DLSS selection runs with FSR 1.0 as the live upscaler: the launcher
+keeps `BB_FSR1=1`, sets `BB_UPSCALER=dlss4`, and says so in the UI and the log. With the module and the DLL both
+present it sets `BB_FSR1=0` and the engine takes over.
 
 Crash guard: if a DLSS session ends with exit code 3, 23, 142, an NTSTATUS fault (>= 0xC0000000) or a signal, or
 the launcher never saw it end (PC/driver crash), DLSS switches itself off until the user clicks Re-enable.
