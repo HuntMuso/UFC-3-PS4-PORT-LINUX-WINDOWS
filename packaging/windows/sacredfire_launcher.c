@@ -76,7 +76,7 @@ typedef struct {
 } Settings;
 static Settings settings = {.resolution = 1, .fps_mode = 5, .present_mode = 2, .upscaler = 0, .sharpness = 2, .skip_movies = 1};
 /* Choices of the Video panel (index = the saved value). */
-static const wchar_t *const resolution_names[] = {L"1280x720", L"1920x1080", L"2560x1440 (2K, experimental)", L"3840x2160 (4K, experimental)"};
+static const wchar_t *const resolution_names[] = {L"1280x720", L"1920x1080", L"2560x1440 (2K, deneysel)", L"3840x2160 (4K, deneysel)"};
 /* 2K and 4K (UFC-45/46, validated on Linux): PS4 Pro with a 3840x2160 VideoOut in both, and the
  * experiment's patch (patches\experiments\<dir>, its own patches json) turning the game's
  * 3200x1800 Favor Resolution scene into 2560x1440 / 3840x2160. The scene only grows with
@@ -84,9 +84,9 @@ static const wchar_t *const resolution_names[] = {L"1280x720", L"1920x1080", L"2
 static const wchar_t *const resolution_w[] = {L"1280", L"1920", L"3840", L"3840"}, *const resolution_h[] = {L"720", L"1080", L"2160", L"2160"};
 static const wchar_t *const resolution_experiment[] = {NULL, NULL, L"ufc46-1440p", L"ufc45-4k"};
 static const wchar_t *const resolution_experiment_config[] = {NULL, NULL, L"patches-1440p.json", L"patches-4k.json"};
-static const wchar_t *const display_names[] = {L"Same as the game", L"1920x1080 (Full HD)", L"2560x1440 (2K)", L"3840x2160 (4K)"};
+static const wchar_t *const display_names[] = {L"Oyunla aynı", L"1920x1080 (Full HD)", L"2560x1440 (2K)", L"3840x2160 (4K)"};
 static const wchar_t *const display_sizes[] = {NULL, L"1920x1080", L"2560x1440", L"3840x2160"};
-static const wchar_t *const fps_names[] = {L"60 FPS", L"90 FPS", L"120 FPS", L"144 FPS", L"240 FPS", L"Unlimited"};
+static const wchar_t *const fps_names[] = {L"60 FPS", L"90 FPS", L"120 FPS", L"144 FPS", L"240 FPS", L"Sınırsız"};
 static const wchar_t *const fps_limits[] = {L"60", L"90", L"120", L"144", L"240", L"0"};
 /* sacredfire.ini before 90 FPS stored the index into {60, 120, 144, 240, unlimited}; the limit
  * itself is saved now (fps_limit=), and an old fps_mode index is mapped onto the new list. */
@@ -97,12 +97,16 @@ static int fps_index_of(const wchar_t *limit) {
 }
 /* Immediate is the default on Windows: NVIDIA's Mailbox there paced the menu at twice the
  * display refresh (120 on a 60 Hz laptop panel, Omen 16 in discrete mode; Immediate 240). */
-static const wchar_t *const present_names[] = {L"Mailbox (capped at 2x refresh on NVIDIA)", L"VSync (FIFO)", L"Immediate (uncapped, may tear)"};
+static const wchar_t *const present_names[] = {L"Mailbox (NVIDIA'da yenileme hızının 2 katıyla sınırlı)", L"VSync (FIFO)", L"Immediate (sınırsız, görüntü yırtılabilir)"};
 static const wchar_t *const present_modes[] = {L"Mailbox", L"Fifo", L"Immediate"};
 /* Upscaling at present (spatial, so it fits any game): FSR 1.0 when the window or screen is
  * larger than the game's output; RCAS sharpening with it (attenuation in stops: lower = sharper). */
-static const wchar_t *const upscaler_names[] = {L"Off (bilinear)", L"AMD FSR 1.0"};
-static const wchar_t *const sharpness_names[] = {L"Off", L"Low", L"Medium", L"High"};
+static const wchar_t *const upscaler_names[] = {L"Kapalı (bilinear)", L"AMD FSR 1.0", L"NVIDIA DLSS 4 - Kalite", L"NVIDIA DLSS 4 - Dengeli", L"NVIDIA DLSS 4 - Performans", L"NVIDIA DLSS 4 - DLAA (doğal çözünürlük)"};
+/* DLSS (upscaler index 2..5): the mode the game engine's DLSS module gets (BB_DLSS_MODE). The engine has no
+ * DLSS module yet (share\\engine-features.json without "dlss4": true), so FSR 1.0 stays the live upscaler
+ * until it has: dlss_engine_ready(). */
+static const wchar_t *const dlss_mode_ids[] = {NULL, NULL, L"quality", L"balanced", L"performance", L"dlaa"};
+static const wchar_t *const sharpness_names[] = {L"Kapalı", L"Düşük", L"Orta", L"Yüksek"};
 static const wchar_t *const sharpness_attenuation[] = {L"2000", L"1000", L"500", L"200"};
 #define COUNT(a) (int)(sizeof(a) / sizeof((a)[0]))
 /* The PS4 system language (BB_LANGUAGE, the system parameter the game reads): the languages
@@ -110,8 +114,8 @@ static const wchar_t *const sharpness_attenuation[] = {L"2000", L"1000", L"500",
  * spa_es, spa_mx, por_br, pol_pl, rus_ru, jpn_jp, chi_hk), and Portuguese (Portugal), which it
  * has no text of. The first is the default; the id is saved (language=). */
 static const wchar_t *const language_names[] = {
-    L"English (US)", L"French", L"German", L"Italian", L"Spanish (Spain)", L"Spanish (Latin America)",
-    L"Portuguese (Brazil)", L"Portuguese (Portugal)", L"Polish", L"Russian", L"Japanese", L"Chinese (Traditional)"};
+    L"İngilizce (ABD)", L"Fransızca", L"Almanca", L"İtalyanca", L"İspanyolca (İspanya)", L"İspanyolca (Latin Amerika)",
+    L"Portekizce (Brezilya)", L"Portekizce (Portekiz)", L"Lehçe", L"Rusça", L"Japonca", L"Çince (Geleneksel)"};
 static const wchar_t *const language_ids[] = {L"1", L"2", L"4", L"5", L"3", L"20", L"17", L"7", L"16", L"8", L"0", L"10"};
 static int language_index_of(const wchar_t *id) {
     for (int i = 0; i < COUNT(language_ids); ++i) if (!wcscmp(language_ids[i], id)) return i;
@@ -124,7 +128,7 @@ static const wchar_t *const managed_env[] = {
     L"BB_FULLSCREEN", L"BB_VK_VALIDATION", L"BB_FRAME_STATS", L"BB_MENU_TRACE", L"BB_GAMEPAD", L"BB_NEO",
     L"BB_READBACKS", L"BB_READBACK_LINEAR", L"BB_GPU_WRITE_TWINS", L"BB_WRITE_WINDOW", L"BB_FLIP_RATE", L"BB_VBLANK_HZ",
     L"BB_Z16S8_AS_D16", L"BB_PREUPLOAD", L"BB_WRITE_STEP", L"BB_COPY_GPU_BUFFERS", L"BB_FPS_LIMIT", L"BB_PRESENT_MODE",
-    L"BB_INTERNAL_WIDTH", L"BB_INTERNAL_HEIGHT", L"BB_WINDOW_SIZE", L"BB_USER_NAME", L"BB_SKIP_MOVIES", L"BB_SKIP_MOVIE_FILE", L"BB_FSR1", L"BB_RCAS", L"BB_RCAS_ATTENUATION",
+    L"BB_INTERNAL_WIDTH", L"BB_INTERNAL_HEIGHT", L"BB_WINDOW_SIZE", L"BB_USER_NAME", L"BB_SKIP_MOVIES", L"BB_SKIP_MOVIE_FILE", L"BB_FSR1", L"BB_UPSCALER", L"BB_DLSS_MODE", L"BB_DLSS_FALLBACK", L"BB_RCAS", L"BB_RCAS_ATTENUATION",
     L"BB_LANGUAGE", L"BB_ONLINE_SERVER", L"BB_FRAME_LOG", L"BB_READBACK_LOG", L"BB_PATCHES_DIR", L"BB_PATCHES_CONFIG",
 };
 static wchar_t managed_value[sizeof(managed_env) / sizeof(managed_env[0])][1024];
@@ -150,7 +154,7 @@ static const wchar_t *given_env(const wchar_t *name) {
 static int clampi(int v, int n) { return v < 0 || v >= n ? 0 : v; }
 /* Online play (online_mode= in sacredfire.ini; before it, a non-empty online_server= meant Join). */
 enum { ONLINE_OFFLINE, ONLINE_JOIN, ONLINE_HOST };
-static const wchar_t *const online_mode_names[] = {L"Offline", L"Join server", L"Host server"};
+static const wchar_t *const online_mode_names[] = {L"Çevrimdışı", L"Sunucuya katıl", L"Sunucu kur"};
 static const wchar_t *const online_mode_ids[] = {L"offline", L"join", L"host"};
 
 static int exists(const wchar_t *path) { return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES; }
@@ -346,7 +350,7 @@ static DWORD run(wchar_t *line, char *captured, size_t capture_size, int is_game
     if (stop_requested) return 130;
     SECURITY_ATTRIBUTES inheritable = {.nLength = sizeof(inheritable), .bInheritHandle = TRUE};
     HANDLE read_end = NULL, write_end = NULL;
-    if (!CreatePipe(&read_end, &write_end, &inheritable, 0)) { fail(L"CreatePipe failed"); return 127; }
+    if (!CreatePipe(&read_end, &write_end, &inheritable, 0)) { fail(L"CreatePipe başarısız oldu"); return 127; }
     SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
     STARTUPINFOW startup = {.cb = sizeof(startup), .dwFlags = STARTF_USESTDHANDLES, .hStdOutput = write_end, .hStdError = write_end};
     PROCESS_INFORMATION process;
@@ -490,7 +494,7 @@ static void address_token(const wchar_t *text, wchar_t *out, size_t n) {
 typedef struct { uint32_t ip; int rank; wchar_t text[16], label[192]; } LocalAddress;
 static LocalAddress local_addresses[32];
 static int local_address_count;
-static const wchar_t *const rank_names[] = {L"LAN", L"VPN", L"public", L"virtual adapter"};
+static const wchar_t *const rank_names[] = {L"LAN", L"VPN", L"genel", L"sanal adaptör"};
 static int name_has(const wchar_t *name, const wchar_t *part) { return StrStrIW(name, part) != NULL; }
 static void local_addresses_refresh(void) {
     local_address_count = 0;
@@ -530,12 +534,12 @@ static void local_addresses_refresh(void) {
 /* The Host address: an IPv4 address of this PC that the friend can reach. 0 and a message to
  * show when it is not usable; a public address is allowed (a note goes to the log). */
 static int host_address_check(const wchar_t *text, uint32_t *ip, wchar_t *message, size_t n) {
-    static const wchar_t pick[] = L"Pick this PC's LAN address (often 192.168.x.x) or, to play outside your home network, "
-                                  L"its VPN address (Tailscale 100.x.x.x, ZeroTier) from the list; Rescan updates it.";
-    if (!text[0]) { _snwprintf(message, n, L"Host server: no address for your friend. %ls", pick); message[n - 1] = 0; return 0; }
-    if (!parse_ipv4(text, ip)) { _snwprintf(message, n, L"Host server: \"%ls\" is not an IPv4 address (like 192.168.1.20). %ls", text, pick); message[n - 1] = 0; return 0; }
+    static const wchar_t pick[] = L"Listeden bu PC'nin LAN adresini (çoğunlukla 192.168.x.x) veya ev ağının dışında oynamak için "
+                                  L"VPN adresini (Tailscale 100.x.x.x, ZeroTier) seç; Yeniden tara listeyi günceller.";
+    if (!text[0]) { _snwprintf(message, n, L"Sunucu kur: arkadaşın için adres yok. %ls", pick); message[n - 1] = 0; return 0; }
+    if (!parse_ipv4(text, ip)) { _snwprintf(message, n, L"Sunucu kur: \"%ls\" bir IPv4 adresi değil (örn. 192.168.1.20). %ls", text, pick); message[n - 1] = 0; return 0; }
     if ((*ip >> 24) == 127) {
-        _snwprintf(message, n, L"Host server: %ls is this PC only (loopback): your friend cannot reach it. %ls", text, pick); message[n - 1] = 0; return 0;
+        _snwprintf(message, n, L"Sunucu kur: %ls yalnızca bu PC (loopback): arkadaşın ulaşamaz. %ls", text, pick); message[n - 1] = 0; return 0;
     }
     if (!*ip || (*ip >> 28) >= 14 || (*ip >> 16) == 0xa9fe) {
         _snwprintf(message, n, L"Host server: %ls cannot be used by your friend (%ls). %ls", text,
@@ -546,7 +550,7 @@ static int host_address_check(const wchar_t *text, uint32_t *ip, wchar_t *messag
     int found = !p_GetAdaptersAddresses; /* no list on this system: the start checks it */
     for (int i = 0; i < local_address_count; ++i) found |= local_addresses[i].ip == *ip;
     if (!found) {
-        _snwprintf(message, n, L"Host server: %ls is not an address of this PC now (is the network or the VPN connected?). %ls", text, pick);
+        _snwprintf(message, n, L"Sunucu kur: %ls şu an bu PC'nin adresi değil (ağ veya VPN bağlı mı?). %ls", text, pick);
         message[n - 1] = 0; return 0;
     }
     if (!ip_private(*ip) && !ip_cgnat(*ip))
@@ -626,7 +630,7 @@ static int server_failed(void) {
     if (!server_process || WaitForSingleObject(server_process, 0) != WAIT_OBJECT_0) return 0;
     server_log_tail();
     server_stop(L"an unexpected server exit");
-    fail(L"The hosted server stopped unexpectedly. This online session will close; see the server log.");
+    fail(L"Kurulan sunucu beklenmedik şekilde durdu. Bu çevrimiçi oturum kapanacak; sunucu kaydına bak.");
     return 1;
 }
 /* Starts the server and waits until it answers on `ip`. 0: ready; 1: failed (said); 2: Stop. */
@@ -634,8 +638,8 @@ static int server_start(uint32_t ip) {
     wchar_t address[16], script_path[PATHW], message[1024];
     ip_text(ip, address, 16);
     join(script_path, PATHW, root, L"tools\\ufc3_server.py");
-    if (!exists(script_path)) { fail(L"tools\\ufc3_server.py is missing next to the launcher: the package is incomplete."); return 1; }
-    if (!net_available) { fail(L"Host server: Windows networking (ws2_32.dll) is not available."); return 1; }
+    if (!exists(script_path)) { fail(L"tools\\ufc3_server.py launcher'ın yanında yok: paket eksik."); return 1; }
+    if (!net_available) { fail(L"Sunucu kur: Windows ağ desteği (ws2_32.dll) kullanılamıyor."); return 1; }
     /* Ports already held: not ours to take over or close. */
     wchar_t taken[256] = L""; size_t at = 0;
     for (int i = 0; i < COUNT(host_tcp_ports); ++i)
@@ -772,14 +776,27 @@ static void gamepads_refresh(void) {
     }
 }
 
+/* nvngx_dlss.dll in bin\\ and share\\engine-features.json with "dlss4": true (written by an engine build that has the module). */
+static int dlss_engine_ready(void) {
+    wchar_t dll[PATHW], features[PATHW];
+    join(dll, PATHW, root, L"bin\\nvngx_dlss.dll"); join(features, PATHW, root, L"share\\engine-features.json");
+    if (!exists(dll)) return 0;
+    FILE *f = _wfopen(features, L"rb");
+    if (!f) return 0;
+    char text[4096]; size_t n = fread(text, 1, sizeof(text) - 1, f); text[n] = 0; fclose(f);
+    const char *key = strstr(text, "\"dlss4\"");
+    if (!key || !(key = strchr(key, ':'))) return 0;
+    while (*++key == ' ' || *key == '\t') {}
+    return !strncmp(key, "true", 4);
+}
 /* ---- the run: what run.sh does, then the game. Returns the game's exit code. ---- */
 static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
     wchar_t out[PATHW], user_dir[PATHW], config[PATHW];
     join(out, PATHW, data, L"out"); ensure_directory(out);
     join(user_dir, PATHW, data, L"user"); ensure_directory(user_dir);
     config_path(config);
-    if (!exists(python)) { fail(L"python\\python.exe is missing next to the launcher: the package is incomplete."); return 2; }
-    if (!exists(game_exe)) { fail(L"bin\\sacredfire-game.exe is missing next to the launcher: the package is incomplete."); return 2; }
+    if (!exists(python)) { fail(L"python\\python.exe launcher'ın yanında yok: paket eksik."); return 2; }
+    if (!exists(game_exe)) { fail(L"bin\\sacredfire-game.exe launcher'ın yanında yok: paket eksik."); return 2; }
     SetEnvironmentVariableW(L"BB_CONFIG", config);
     SetEnvironmentVariableW(L"BB_USER_DIR", env_or(L"BB_USER_DIR", user_dir));
     SetEnvironmentVariableW(L"BB_GPU_USER_DIR", env_or(L"BB_GPU_USER_DIR", user_dir));
@@ -788,7 +805,7 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
     wchar_t eboot[PATHW]; join(eboot, PATHW, game, L"eboot.bin");
     if (!game[0] || !exists(eboot)) {
         wchar_t m[PATHW + 128];
-        _snwprintf(m, PATHW + 128, L"No eboot.bin in \"%ls\": choose the game folder (CUSA06534, with CUSA06534-patch beside it or merged in).", game);
+        _snwprintf(m, PATHW + 128, L"\"%ls\" içinde eboot.bin yok: oyun klasörünü seç (CUSA06534; yanında CUSA06534-patch ile veya birleştirilmiş).", game);
         m[PATHW + 127] = 0; fail(m); return 2;
     }
     /* Base and update side by side (CUSA06534 + CUSA06534-patch, as PKG extractors leave them):
@@ -799,7 +816,7 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
         const wchar_t *args[] = {game};
         if (script(L"scripts", L"merge_update.py", args, 1, merged, sizeof(merged))) {
             logf("%s", merged);
-            fail(L"Merging the 1.14 update into the game folder failed (see the log).");
+            fail(L"1.14 güncellemesini oyun klasörüyle birleştirme başarısız oldu (kayda bak).");
             return 2;
         }
         /* The folder is the last line (progress lines come before it). */
@@ -816,7 +833,7 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
         const wchar_t *args[] = {game};
         if (script(L"scripts", L"game_check.py", args, 1, profile, sizeof(profile))) {
             logf("%s", profile);
-            fail(L"The game check failed (see the log): the folder is not EA SPORTS UFC 3 CUSA06534 with the 1.14 update (CUSA06534-patch) beside it or merged in.");
+            fail(L"Oyun denetimi başarısız oldu (kayda bak): klasör, yanında 1.14 güncellemesi (CUSA06534-patch) olan veya birleştirilmiş EA SPORTS UFC 3 CUSA06534 değil.");
             return 2;
         }
         trim(profile);
@@ -836,15 +853,15 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
     logw(L"Game profile: %ls\n", profile_w);
     /* Preparation (scripts/ as run.sh runs them; mod overlays need symlinks and are not applied here). */
     const wchar_t *prepare[] = {game, L"--out", out};
-    if (script(L"scripts", L"prepare.py", prepare, 3, NULL, 0)) { fail(L"prepare.py failed (see the log)"); return 2; }
-    if (script(L"scripts", L"link_libc.py", prepare, 3, NULL, 0)) { fail(L"link_libc.py failed (see the log)"); return 2; }
+    if (script(L"scripts", L"prepare.py", prepare, 3, NULL, 0)) { fail(L"prepare.py başarısız oldu (kayda bak)"); return 2; }
+    if (script(L"scripts", L"link_libc.py", prepare, 3, NULL, 0)) { fail(L"link_libc.py başarısız oldu (kayda bak)"); return 2; }
     const wchar_t *link_args[] = {game, L"--out", out, L"--modules", L"libc.prx", L"libSceFios2.prx"};
-    if (script(L"scripts", L"link_modules.py", link_args, 6, NULL, 0)) { fail(L"link_modules.py failed (see the log)"); return 2; }
+    if (script(L"scripts", L"link_modules.py", link_args, 6, NULL, 0)) { fail(L"link_modules.py başarısız oldu (kayda bak)"); return 2; }
     wchar_t aerolib[PATHW]; join(aerolib, PATHW, root, L"share\\aerolib.inl");
     const wchar_t *names_args[] = {L"--out", out, L"--aerolib", aerolib};
-    if (script(L"tools", L"gen_import_names.py", names_args, 4, NULL, 0)) { fail(L"gen_import_names.py failed (see the log)"); return 2; }
+    if (script(L"tools", L"gen_import_names.py", names_args, 4, NULL, 0)) { fail(L"gen_import_names.py başarısız oldu (kayda bak)"); return 2; }
     const wchar_t *content_args[] = {game, L"--out", out, L"--sku", env_or(L"BB_CONTENT_SKU", L"full")};
-    if (script(L"scripts", L"content_profile.py", content_args, 5, NULL, 0)) { fail(L"content_profile.py failed (see the log)"); return 2; }
+    if (script(L"scripts", L"content_profile.py", content_args, 5, NULL, 0)) { fail(L"content_profile.py başarısız oldu (kayda bak)"); return 2; }
     /* 2K / 4K: the experiment's folder and json instead of the community patches (as
      * tools/ufc45-4k-test.sh and ufc46-1440p-test.sh run them); a BB_PATCHES_DIR or
      * BB_PATCHES_CONFIG the launcher was started with wins. */
@@ -862,7 +879,7 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
     const wchar_t *patches_config_used = given_env(L"BB_PATCHES_CONFIG") ? given_env(L"BB_PATCHES_CONFIG") : patches_config;
     const wchar_t *patch_args[] = {L"--patches-dir", patches_dir_used, L"--patches-config", patches_config_used,
                                    L"--app-version", L"01.14", L"--title-id", L"CUSA06534", L"--out", out, L"--settings", config};
-    if (script(L"scripts", L"patches.py", patch_args, 12, NULL, 0)) { fail(L"patches.py failed (see the log)"); return 2; }
+    if (script(L"scripts", L"patches.py", patch_args, 12, NULL, 0)) { fail(L"patches.py başarısız oldu (kayda bak)"); return 2; }
     /* The count of guest TCB loads the linker rewrote (link.json fs_loads_patched): the game
      * executable cross-checks its own scan against it. */
     wchar_t tls_loads[32] = L"-1";
@@ -897,10 +914,10 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
     const wchar_t *online = settings.online_mode == ONLINE_HOST ? settings.host_address :
                             settings.online_mode == ONLINE_JOIN ? settings.join_address : NULL;
     if (settings.online_mode == ONLINE_JOIN && !settings.join_address[0] && !given_env(L"BB_ONLINE_SERVER")) {
-        fail(L"Join server: enter the host's IP address."); return 2;
+        fail(L"Sunucuya katıl: sunucuyu kuran kişinin IP adresini gir."); return 2;
     }
     if (settings.online_mode == ONLINE_HOST && given_env(L"BB_ONLINE_SERVER") && wcscmp(given_env(L"BB_ONLINE_SERVER"), settings.host_address)) {
-        fail(L"BB_ONLINE_SERVER differs from the selected Host address. Remove the environment override or select that same local IP."); return 2;
+        fail(L"BB_ONLINE_SERVER seçilen Sunucu adresinden farklı. Ortam değişkenini kaldır veya aynı yerel IP'yi seç."); return 2;
     }
     game_env(L"BB_ONLINE_SERVER", online);
     /* The fight scene renders black without precise readbacks of linear images (shadPS4 issue
@@ -949,7 +966,15 @@ static DWORD play_impl(const wchar_t *const *extra, int extra_count) {
         game_env(L"BB_SKIP_MOVIES", settings.skip_movies && exists(clip) ? L"1" : L"0");
         game_env(L"BB_SKIP_MOVIE_FILE", clip);
     }
-    game_env(L"BB_FSR1", settings.upscaler == 1 ? L"1" : L"0");
+    {
+        const int dlss = settings.upscaler >= 2, dlss_ready = dlss && dlss_engine_ready();
+        game_env(L"BB_FSR1", settings.upscaler == 1 || (dlss && !dlss_ready) ? L"1" : L"0");
+        game_env(L"BB_UPSCALER", dlss ? L"dlss4" : NULL);
+        game_env(L"BB_DLSS_MODE", dlss ? dlss_mode_ids[settings.upscaler] : NULL);
+        game_env(L"BB_DLSS_FALLBACK", dlss ? L"fsr1" : NULL);
+        if (dlss && !dlss_ready) logw(L"DLSS 4 seçili ama motorda DLSS modülü veya bin\\nvngx_dlss.dll yok: AMD FSR 1.0 ile çalışıyor.\n");
+        else if (dlss) logw(L"Ölçekleme: NVIDIA DLSS 4 (%ls)\n", dlss_mode_ids[settings.upscaler]);
+    }
     game_env(L"BB_RCAS", settings.sharpness ? L"1" : L"0");
     game_env(L"BB_RCAS_ATTENUATION", sharpness_attenuation[settings.sharpness]);
     SetEnvironmentVariableW(L"BB_UFFD", L"0");            /* Linux only */
@@ -1157,9 +1182,9 @@ static int steam_add_shortcut(const wchar_t *path, const char *exe_quoted, const
 }
 /* The button: every Steam user of this Steam installation gets the shortcut. */
 static void add_to_steam(void) {
-    if (steam_running()) { fail(L"Close Steam first: it overwrites its shortcuts when it exits. Then press Add to Steam again."); return; }
+    if (steam_running()) { fail(L"Önce Steam'i kapat: kapanırken kısayolların üzerine yazıyor. Sonra Steam'e ekle'ye tekrar bas."); return; }
     wchar_t steam[PATHW], userdata[PATHW], pattern[PATHW];
-    if (!steam_root(steam)) { fail(L"Steam was not found (no SteamPath in the registry)."); return; }
+    if (!steam_root(steam)) { fail(L"Steam bulunamadı (kayıt defterinde SteamPath yok)."); return; }
     join(userdata, PATHW, steam, L"userdata"); join(pattern, PATHW, userdata, L"*");
     wchar_t self[PATHW]; GetModuleFileNameW(NULL, self, PATHW);
     char exe_utf8[PATHW * 3], root_utf8[PATHW * 3], exe_quoted[PATHW * 3 + 4], root_quoted[PATHW * 3 + 4];
@@ -1181,9 +1206,9 @@ static void add_to_steam(void) {
         } while (FindNextFileW(search, &found));
         FindClose(search);
     }
-    if (added + replaced == 0) { fail(failed ? L"The Steam shortcut could not be written (see the log)." : L"No Steam user folder was found (Steam\\userdata)."); return; }
+    if (added + replaced == 0) { fail(failed ? L"Steam kısayolu yazılamadı (kayda bak)." : L"Steam kullanıcı klasörü bulunamadı (Steam\\userdata)."); return; }
     wchar_t message[256];
-    _snwprintf(message, 256, L"Added to Steam as \"SacredFire\" (%d added, %d updated). Start Steam to see it; it starts the game with the saved settings (--play).", added, replaced);
+    _snwprintf(message, 256, L"Steam'e \"SacredFire\" olarak eklendi (%d eklendi, %d güncellendi). Görmek için Steam'i aç; oyunu kayıtlı ayarlarla başlatır (--play).", added, replaced);
     logw(L"%ls\n", message);
     if (!GetEnvironmentVariableW(L"BB_NO_DIALOGS", NULL, 0)) MessageBoxW(main_window, message, L"SacredFire", MB_OK | MB_ICONINFORMATION);
 }
@@ -1224,9 +1249,9 @@ static HWND control(int id) { return controls[id - 100]; }
 enum { CLIENT_W = 900, CLIENT_H = 884, BANNER_H = 120 };
 /* The sections, at 96 DPI (sx scales them). */
 static const struct { int x, y, w, h; const wchar_t *title; } panels[] = {
-    {16, 134, 426, 214, L"GAME"}, {16, 360, 426, 220, L"ONLINE"},
-    {458, 134, 426, 330, L"VIDEO"}, {458, 476, 426, 104, L"ADVANCED"},
-    {16, 592, 868, 88, L"LOGS"}};
+    {16, 134, 426, 214, L"OYUN"}, {16, 360, 426, 220, L"ÇEVRİMİÇİ"},
+    {458, 134, 426, 330, L"GÖRÜNTÜ"}, {458, 476, 426, 104, L"GELİŞMİŞ"},
+    {16, 592, 868, 88, L"KAYITLAR"}};
 static HBRUSH brush_background, brush_panel, brush_input, brush_log;
 static HFONT font_section, font_title, font_small, font_log, font_action;
 static int hot_id;                       /* the owner-drawn button under the mouse */
@@ -1339,9 +1364,9 @@ static void paint_window(HDC dc, RECT client) {
     }
     RECT t = {text_x, sx(26), client.right - sx(16), sx(66)};
     SelectObject(dc, font_title); SetTextColor(dc, C_GOLD);
-    DrawTextW(dc, L"EA SPORTS UFC 3 \x2014 native PC port", -1, &t, DT_SINGLELINE | DT_LEFT | DT_BOTTOM | DT_NOPREFIX | DT_END_ELLIPSIS);
+    DrawTextW(dc, L"EA SPORTS UFC 3 \x2014 yerel PC portu", -1, &t, DT_SINGLELINE | DT_LEFT | DT_BOTTOM | DT_NOPREFIX | DT_END_ELLIPSIS);
     char version[64]; read_version(version, sizeof(version));
-    wchar_t line[160]; _snwprintf(line, 160, L"PS4 CUSA06534 \x00B7 SacredFire %hs \x00B7 your own game dump required", version); line[159] = 0;
+    wchar_t line[160]; _snwprintf(line, 160, L"PS4 CUSA06534 \x00B7 SacredFire %hs \x00B7 kendi oyun dökümünüz gerekir", version); line[159] = 0;
     t.top = sx(70); t.bottom = sx(90);
     SelectObject(dc, ui_font); SetTextColor(dc, C_TEXT_DIM);
     DrawTextW(dc, line, -1, &t, DT_SINGLELINE | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
@@ -1447,7 +1472,7 @@ static HWND edit(const wchar_t *text, int x, int y, int w, int id) {
 static void fill_gamepads(void) {
     HWND combo = control(ID_GAMEPAD);
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Any gamepad (or the keyboard)");
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Herhangi bir kontrolcü (veya klavye)");
     int selected = 0;
     for (int i = 0; i < gamepad_count; ++i) {
         wchar_t label[256]; _snwprintf(label, 256, L"%ls  [%.8ls]", gamepads[i].name, gamepads[i].guid); label[255] = 0;
@@ -1464,10 +1489,10 @@ static const char *const ctl_inputs[CTL_INPUTS] = {
     "touchpad_right", "up", "down", "left", "right", "move_up", "move_down", "move_left", "move_right",
     "look_up", "look_down", "look_left", "look_right"};
 static const wchar_t *const ctl_labels[CTL_INPUTS] = {
-    L"Cross (X)", L"Circle", L"Square", L"Triangle", L"L1", L"R1", L"L2", L"R2", L"L3 (left stick click)",
-    L"R3 (right stick click)", L"Options", L"Touchpad (left half)", L"Touchpad (right half)", L"D-pad up",
-    L"D-pad down", L"D-pad left", L"D-pad right", L"Left stick up", L"Left stick down", L"Left stick left",
-    L"Left stick right", L"Right stick up", L"Right stick down", L"Right stick left", L"Right stick right"};
+    L"Çarpı (X)", L"Daire", L"Kare", L"Üçgen", L"L1", L"R1", L"L2", L"R2", L"L3 (sol çubuğa bas)",
+    L"R3 (sağ çubuğa bas)", L"Options", L"Dokunmatik yüzey (sol yarı)", L"Dokunmatik yüzey (sağ yarı)", L"Yön tuşu yukarı",
+    L"Yön tuşu aşağı", L"Yön tuşu sol", L"Yön tuşu sağ", L"Sol çubuk yukarı", L"Sol çubuk aşağı", L"Sol çubuk sol",
+    L"Sol çubuk sağ", L"Sağ çubuk yukarı", L"Sağ çubuk aşağı", L"Sağ çubuk sol", L"Sağ çubuk sağ"};
 /* The runtime's defaults (runtime_pad.c bind_defaults), as SDL names. */
 static const char *const ctl_default_keys[CTL_INPUTS] = {
     "Space", "Left Shift", "E", "Q", "1", "3", "R", "F", "Z", "C", "Return", "Tab", "Backspace",
@@ -1481,10 +1506,10 @@ static const char *const ctl_pad_names[] = {
     "rightstick", "start", "back", "guide", "touchpad", "dpup", "dpdown", "dpleft", "dpright", "misc1",
     "paddle1", "paddle2", "paddle3", "paddle4"};
 static const wchar_t *const ctl_pad_labels[] = {
-    L"(none)", L"A / Cross", L"B / Circle", L"X / Square", L"Y / Triangle", L"LB / L1", L"RB / R1",
-    L"LT / L2", L"RT / R2", L"Left stick click", L"Right stick click", L"Start / Options", L"Back / Share",
-    L"Guide / PS", L"Touchpad click", L"D-pad up", L"D-pad down", L"D-pad left", L"D-pad right",
-    L"Misc (Share / Capture)", L"Paddle 1", L"Paddle 2", L"Paddle 3", L"Paddle 4"};
+    L"(yok)", L"A / Çarpı", L"B / Daire", L"X / Kare", L"Y / Üçgen", L"LB / L1", L"RB / R1",
+    L"LT / L2", L"RT / R2", L"Sol çubuğa bas", L"Sağ çubuğa bas", L"Start / Options", L"Back / Share",
+    L"Guide / PS", L"Dokunmatik yüzey tıkı", L"Yön tuşu yukarı", L"Yön tuşu aşağı", L"Yön tuşu sol", L"Yön tuşu sağ",
+    L"Misc (Share / Capture)", L"Pedal 1", L"Pedal 2", L"Pedal 3", L"Pedal 4"};
 static char ctl_keys[CTL_INPUTS][64], ctl_pads[CTL_INPUTS][64];
 static HWND ctl_window, ctl_key_buttons[CTL_INPUTS], ctl_pad_combos[CTL_INPUTS];
 static int ctl_capture = -1; /* the row waiting for a key */
@@ -1492,8 +1517,8 @@ enum { ID_CTL_KEY = 2000, ID_CTL_PAD = 2100, ID_CTL_SAVE = 2200, ID_CTL_DEFAULTS
 
 static void ctl_show_key(int row) {
     wchar_t text[96];
-    if (ctl_capture == row) wcscpy(text, L"Press a key... (Esc: cancel, Delete: none)");
-    else if (!ctl_keys[row][0]) wcscpy(text, L"(none)");
+    if (ctl_capture == row) wcscpy(text, L"Bir tuşa bas... (Esc: iptal, Delete: yok)");
+    else if (!ctl_keys[row][0]) wcscpy(text, L"(yok)");
     else { MultiByteToWideChar(CP_UTF8, 0, ctl_keys[row], -1, text, 96); }
     SetWindowTextW(ctl_key_buttons[row], text);
 }
@@ -1522,7 +1547,7 @@ static void ctl_save(void) {
         snprintf(key, sizeof(key), "key.%s", ctl_inputs[i]); ini_set(key, ctl_keys[i]);
         if (i < 17) { snprintf(key, sizeof(key), "pad.%s", ctl_inputs[i]); ini_set(key, ctl_pads[i]); }
     }
-    logw(L"Controls saved to bbport.ini\n");
+    logw(L"Kontroller bbport.ini dosyasına kaydedildi\n");
 }
 /* A Windows key press as SDL's scancode name (SDL_GetScancodeFromName in runtime_pad.c). */
 static int vk_to_sdl_name(WPARAM vk, LPARAM lparam, char *out, size_t n) {
@@ -1629,12 +1654,12 @@ static void controls_open(void) {
     const int rows_h = 26, top = 40, client_w = 640, client_h = top + CTL_INPUTS * rows_h + 56;
     RECT r = {0, 0, sx(client_w), sx(client_h)};
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
-    ctl_window = CreateWindowExW(WS_EX_DLGMODALFRAME, L"UFC3NativeControls", L"Controls", WS_CAPTION | WS_SYSMENU | WS_POPUP,
+    ctl_window = CreateWindowExW(WS_EX_DLGMODALFRAME, L"UFC3NativeControls", L"Kontroller", WS_CAPTION | WS_SYSMENU | WS_POPUP,
                                  CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, main_window, NULL,
                                  GetModuleHandleW(NULL), NULL);
     if (!ctl_window) return;
-    ctl_make(L"STATIC", L"Keyboard: click a key box, then press the key. Gamepad: pick a button. The keyboard and a "
-                        L"gamepad work together.", 0, 12, 8, 616, 30, 0);
+    ctl_make(L"STATIC", L"Klavye: bir tuş kutusuna tıkla, sonra tuşa bas. Kontrolcü: bir düğme seç. Klavye ve "
+                        L"kontrolcü birlikte çalışır.", 0, 12, 8, 616, 30, 0);
     for (int i = 0; i < CTL_INPUTS; ++i) {
         const int y = top + i * rows_h;
         ctl_make(L"STATIC", ctl_labels[i], SS_CENTERIMAGE, 12, y, 180, 22, 0);
@@ -1642,12 +1667,12 @@ static void controls_open(void) {
         if (i < 17) {
             ctl_pad_combos[i] = ctl_make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 436, y, 192, 300, ID_CTL_PAD + i);
             for (int k = 0; k < COUNT(ctl_pad_labels); ++k) SendMessageW(ctl_pad_combos[i], CB_ADDSTRING, 0, (LPARAM)ctl_pad_labels[k]);
-        } else ctl_make(L"STATIC", L"(gamepad: the stick itself)", SS_CENTERIMAGE, 436, y, 192, 22, 0);
+        } else ctl_make(L"STATIC", L"(kontrolcü: analog çubuğun kendisi)", SS_CENTERIMAGE, 436, y, 192, 22, 0);
     }
     const int by = top + CTL_INPUTS * rows_h + 14;
-    ctl_make(L"BUTTON", L"Defaults", BS_PUSHBUTTON, 12, by, 110, 30, ID_CTL_DEFAULTS);
-    ctl_make(L"BUTTON", L"Save", BS_DEFPUSHBUTTON, 400, by, 110, 30, ID_CTL_SAVE);
-    ctl_make(L"BUTTON", L"Cancel", BS_PUSHBUTTON, 518, by, 110, 30, ID_CTL_CANCEL);
+    ctl_make(L"BUTTON", L"Varsayılan", BS_PUSHBUTTON, 12, by, 110, 30, ID_CTL_DEFAULTS);
+    ctl_make(L"BUTTON", L"Kaydet", BS_DEFPUSHBUTTON, 400, by, 110, 30, ID_CTL_SAVE);
+    ctl_make(L"BUTTON", L"İptal", BS_PUSHBUTTON, 518, by, 110, 30, ID_CTL_CANCEL);
     ctl_refresh();
     EnableWindow(main_window, FALSE);
     ShowWindow(ctl_window, SW_SHOW);
@@ -1861,20 +1886,20 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         else if (id == ID_MODE && code == CBN_SELCHANGE) online_controls();
         else if (id == ID_HOSTSCAN && !running) fill_host_addresses();
         else if (id == ID_COPYHOST) copy_host_address();
-        else if (id == ID_BROWSE) { wchar_t folder[PATHW]; if (pick_folder(L"The game folder (CUSA06534; CUSA06534-patch beside it is merged automatically)", folder)) {
+        else if (id == ID_BROWSE) { wchar_t folder[PATHW]; if (pick_folder(L"Oyun klasörü (CUSA06534; yanındaki CUSA06534-patch otomatik birleştirilir)", folder)) {
             SetWindowTextW(control(ID_GAME), folder);
             banner_load(folder); RECT banner = {0, 0, sx(CLIENT_W), sx(BANNER_H)}; InvalidateRect(window, &banner, FALSE);
         } }
         else if (id == ID_LOGDIR_BROWSE && !running) {
             wchar_t folder[PATHW];
-            if (pick_folder(L"The log folder (empty: the data folder's logs)", folder)) {
+            if (pick_folder(L"Kayıt klasörü (boş: veri klasöründeki kayıtlar)", folder)) {
                 SetWindowTextW(control(ID_LOGDIR), folder);
                 wcsncpy(settings.log_dir, folder, PATHW - 1); settings.log_dir[PATHW - 1] = 0;
                 settings_save();
                 open_log_file(L"launcher.log"); /* the log follows the new folder at once */
             }
         }
-        else if (id == ID_RESCAN) { gamepads_refresh(); fill_gamepads(); logw(L"Controllers: %d found\n", gamepad_count); }
+        else if (id == ID_RESCAN) { gamepads_refresh(); fill_gamepads(); logw(L"Kontrolcü: %d bulundu\n", gamepad_count); }
         else if (id == ID_CONTROLS && !running) controls_open();
         else if (id == ID_PLAY && !running) {
             read_controls();
@@ -1882,10 +1907,10 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
             InterlockedExchange(&stop_requested, 0);
             set_running(1);
             HANDLE t = CreateThread(NULL, 0, play_thread, NULL, 0, NULL);
-            if (t) CloseHandle(t); else { fail(L"CreateThread failed"); set_running(0); }
+            if (t) CloseHandle(t); else { fail(L"CreateThread başarısız oldu"); set_running(0); }
         } else if (id == ID_STOP && running) {
             InterlockedExchange(&stop_requested, 1); server_kill();
-            if (game_process) { logw(L"Stop: the game process is ended\n"); TerminateProcess(game_process, 1); }
+            if (game_process) { logw(L"Durdur: oyun işlemi sonlandırılıyor\n"); TerminateProcess(game_process, 1); }
         } else if (id == ID_STEAM && !running) {
             read_controls(); /* the shortcut uses the saved settings */
             add_to_steam();
@@ -1950,7 +1975,7 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return 0;
     case WM_CLOSE:
         if (running) {
-            if (MessageBoxW(window, L"The game is running. Close it too?", L"SacredFire", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
+            if (MessageBoxW(window, L"Oyun çalışıyor. Onu da kapatalım mı?", L"SacredFire", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
             InterlockedExchange(&stop_requested, 1); server_kill();
             if (game_process) TerminateProcess(game_process, 1);
         }
@@ -1987,7 +2012,7 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
 #elif defined(UFC3_DIAGNOSTIC_PACKAGE)
     const wchar_t *window_title = L"EA SPORTS UFC 3 - native PC port (Windows diagnostic test)";
 #else
-    const wchar_t *window_title = L"EA SPORTS UFC 3 - native PC port";
+    const wchar_t *window_title = L"EA SPORTS UFC 3 - yerel PC portu";
 #endif
     main_window = CreateWindowExW(0, wc.lpszClassName, window_title, style, CW_USEDEFAULT, CW_USEDEFAULT, client_w + 16, client_h + 64,
                                   NULL, NULL, instance, NULL);
@@ -2039,57 +2064,57 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
     }
     /* GAME (left column; content x 28..430) */
     int y = 134 + 34;
-    label(L"Game folder (CUSA06534, with CUSA06534-patch beside it)", 28, y, 402); y += 26;
+    label(L"Oyun klasörü (CUSA06534, yanında CUSA06534-patch ile)", 28, y, 402); y += 26;
     edit(settings.game, 28, y, 306, ID_GAME);
-    button(L"Browse...", 342, y, 88, 24, ID_BROWSE); y += 32;
-    label(L"Player name", 28, y, 118);
+    button(L"Gözat...", 342, y, 88, 24, ID_BROWSE); y += 32;
+    label(L"Oyuncu adı", 28, y, 118);
     edit(settings.player[0] ? settings.player : L"Player 1", 150, y, 280, ID_PLAYER);
     SendMessageW(control(ID_PLAYER), EM_SETLIMITTEXT, 16, 0); y += 30;
-    label(L"Language", 28, y, 118); combo(150, y, 280, ID_LANGUAGE, 0); y += 30;
-    label(L"Controller", 28, y, 118); combo(150, y, 280, ID_GAMEPAD, 0); y += 30;
-    note(L"In-game menu: L3+R3 or Insert", 28, y + 4, 190, 18);
-    button(L"Rescan", 226, y, 90, 24, ID_RESCAN);
-    button(L"Controls...", 322, y, 108, 24, ID_CONTROLS);
+    label(L"Dil", 28, y, 118); combo(150, y, 280, ID_LANGUAGE, 0); y += 30;
+    label(L"Kontrolcü", 28, y, 118); combo(150, y, 280, ID_GAMEPAD, 0); y += 30;
+    note(L"Oyun içi menü: L3+R3 veya Insert", 28, y + 4, 190, 18);
+    button(L"Yeniden tara", 226, y, 90, 24, ID_RESCAN);
+    button(L"Kontroller...", 322, y, 108, 24, ID_CONTROLS);
     /* ONLINE */
     y = 360 + 34;
-    label(L"Online play", 28, y, 118); combo(150, y, 280, ID_MODE, 0); y += 30;
-    label(L"Join address", 28, y, 118); edit(settings.join_address, 150, y, 280, ID_ONLINE); y += 30;
-    label(L"Host address", 28, y, 118); combo(150, y, 280, ID_HOST, 1); y += 30;
-    button(L"Rescan", 150, y, 90, 24, ID_HOSTSCAN);
-    button(L"Copy IP", 246, y, 100, 24, ID_COPYHOST); y += 32;
-    note(L"Host: share this PC's address with your friend (Copy IP). Outside your LAN both PCs need a VPN: "
-         L"choose this PC's VPN IP. The server starts with Play and stops with the game.", 28, y, 402, 58);
+    label(L"Çevrimiçi oyun", 28, y, 118); combo(150, y, 280, ID_MODE, 0); y += 30;
+    label(L"Katılma adresi", 28, y, 118); edit(settings.join_address, 150, y, 280, ID_ONLINE); y += 30;
+    label(L"Sunucu adresi", 28, y, 118); combo(150, y, 280, ID_HOST, 1); y += 30;
+    button(L"Yeniden tara", 150, y, 90, 24, ID_HOSTSCAN);
+    button(L"IP kopyala", 246, y, 100, 24, ID_COPYHOST); y += 32;
+    note(L"Sunucu kuran: bu PC'nin adresini arkadaşınla paylaş (IP kopyala). Ev ağın dışında iki PC de VPN "
+         L"kullanmalı: bu PC'nin VPN IP'sini seç. Sunucu Oyna ile başlar, oyunla birlikte kapanır.", 28, y, 402, 58);
     /* VIDEO (right column; content x 470..872) */
     y = 134 + 34;
     const struct { const wchar_t *text; int id; } video_rows[] = {
-        {L"Game resolution", ID_RESOLUTION}, {L"Display resolution", ID_DISPLAY}, {L"Present mode", ID_PRESENT},
-        {L"Upscaling", ID_UPSCALER}, {L"Sharpening (RCAS)", ID_SHARPNESS}, {L"FPS limit", ID_FPS}};
+        {L"Oyun çözünürlüğü", ID_RESOLUTION}, {L"Ekran çözünürlüğü", ID_DISPLAY}, {L"Sunum modu", ID_PRESENT},
+        {L"Ölçekleme", ID_UPSCALER}, {L"Keskinlik (RCAS)", ID_SHARPNESS}, {L"FPS sınırı", ID_FPS}};
     for (int i = 0; i < COUNT(video_rows); ++i, y += 30) {
         label(video_rows[i].text, 470, y, 130); combo(604, y, 268, video_rows[i].id, 0);
         SendMessageW(control(video_rows[i].id), CB_SETDROPPEDWIDTH, (WPARAM)sx(330), 0);
     }
     y += 4;
-    checkbox(L"Fullscreen", 470, y, 190, ID_FULLSCREEN); checkbox(L"PS4 Pro mode (sharper)", 672, y, 200, ID_NEO); y += 26;
-    checkbox(L"Show the FPS counter", 470, y, 190, ID_SHOWFPS); checkbox(L"Skip the intro videos", 672, y, 200, ID_SKIPMOVIES); y += 30;
-    note(L"2K / 4K (experimental): PS4 Pro with a 4K output; in game choose VIDEO \x2192 Favor Resolution. "
-         L"720p / 1080p on a large screen: Display resolution with Upscaling = AMD FSR 1.0.", 470, y, 402, 50);
+    checkbox(L"Tam ekran", 470, y, 190, ID_FULLSCREEN); checkbox(L"PS4 Pro modu (daha net)", 672, y, 200, ID_NEO); y += 26;
+    checkbox(L"FPS sayacını göster", 470, y, 190, ID_SHOWFPS); checkbox(L"Giriş videolarını atla", 672, y, 200, ID_SKIPMOVIES); y += 30;
+    note(L"2K / 4K (deneysel): 4K çıkışlı PS4 Pro; oyunda VIDEO \x2192 Favor Resolution seç. Büyük ekranda 720p/1080p: "
+         L"Ekran çözünürlüğü + FSR 1.0. DLSS: motor modülü gelene dek FSR 1.0 çalışır.", 470, y, 402, 54);
     /* ADVANCED */
     y = 476 + 40;
-    checkbox(L"Clear the shader cache at start", 470, y, 210, ID_CLEAR); checkbox(L"Frame statistics", 692, y, 180, ID_STATS); y += 28;
-    checkbox(L"Vulkan validation layer", 470, y, 210, ID_VALIDATION); checkbox(L"Menu input trace", 692, y, 180, ID_TRACE);
+    checkbox(L"Başlangıçta shader önbelleğini temizle", 470, y, 220, ID_CLEAR); checkbox(L"Kare istatistikleri", 700, y, 172, ID_STATS); y += 28;
+    checkbox(L"Vulkan doğrulama katmanı", 470, y, 220, ID_VALIDATION); checkbox(L"Menü girdi izleme", 700, y, 172, ID_TRACE);
     /* LOGS (full width) */
     y = 592 + 34;
-    label(L"Log folder", 28, y, 90);
+    label(L"Kayıt klasörü", 28, y, 90);
     edit(settings.log_dir, 122, y, 440, ID_LOGDIR);
-    button(L"Browse...", 570, y, 88, 24, ID_LOGDIR_BROWSE);
-    button(L"Open logs", 666, y, 100, 24, ID_LOGS);
-    button(L"Open data", 772, y, 100, 24, ID_DATA); y += 28;
-    note(L"Empty: the data folder's logs. BB_LOG_DIR wins over it; a shared or network drive works.", 122, y, 750, 18);
+    button(L"Gözat...", 570, y, 88, 24, ID_LOGDIR_BROWSE);
+    button(L"Kayıtları aç", 666, y, 100, 24, ID_LOGS);
+    button(L"Verileri aç", 772, y, 100, 24, ID_DATA); y += 28;
+    note(L"Boş: veri klasöründeki kayıtlar. BB_LOG_DIR bunun önüne geçer; paylaşımlı veya ağ sürücüsü de olur.", 122, y, 750, 18);
     /* Play / Stop / Steam, then the log of the run. */
     y = 692;
-    button(L"PLAY", 16, y, 170, 40, ID_PLAY);
-    button(L"STOP", 196, y, 110, 40, ID_STOP);
-    button(L"Add to Steam", 744, y, 140, 40, ID_STEAM); y += 52;
+    button(L"OYNA", 16, y, 170, 40, ID_PLAY);
+    button(L"DURDUR", 196, y, 110, 40, ID_STOP);
+    button(L"Steam'e ekle", 744, y, 140, 40, ID_STEAM); y += 52;
     log_edit = make(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, 16, y, 868, CLIENT_H - y - 16, ID_LOG);
     SendMessageW(log_edit, WM_SETFONT, (WPARAM)font_log, TRUE);
     SendMessageW(log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(sx(6), sx(6)));
@@ -2121,7 +2146,7 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
 #ifdef UFC3_DIAGNOSTIC_PACKAGE
     logw(L"Windows diagnostic test: the data stays beside the exe in diagnostic-data; write windows and their audit are on for every run.\n");
 #endif
-    logw(L"Controllers: %d found; window scale %d%%\n", gamepad_count, (int)(scale * 100));
+    logw(L"Kontrolcü: %d bulundu; pencere ölçeği %d%%\n", gamepad_count, (int)(scale * 100));
     ShowWindow(main_window, SW_SHOW);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
@@ -2131,25 +2156,6 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
         scroll_to_focus();
     }
     return 0;
-}
-
-/* The modern launcher (launcher\modern\ufc3_modern_launcher.py, the bundled pythonw.exe: no console
- * window, no .cmd): UFC3.exe with no arguments opens it and exits. `--classic` (or a package without
- * the modern launcher) opens the Win32 window below instead; `--play` and the other command line
- * switches never go through it, because the modern launcher's Play runs `UFC3.exe --play`. */
-static int start_modern_launcher(void) {
-    wchar_t pythonw[PATHW], script_path[PATHW];
-    join(pythonw, PATHW, root, L"python\\pythonw.exe");
-    join(script_path, PATHW, root, L"launcher\\modern\\ufc3_modern_launcher.py");
-    if (!exists(pythonw) || !exists(script_path)) return 0;
-    static wchar_t line[32768];
-    line[0] = 0;
-    append_argument(line, 32768, pythonw); append_argument(line, 32768, script_path);
-    STARTUPINFOW startup = {.cb = sizeof(startup)};
-    PROCESS_INFORMATION process;
-    if (!CreateProcessW(NULL, line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, root, &startup, &process)) return 0;
-    CloseHandle(process.hThread); CloseHandle(process.hProcess);
-    return 1;
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
@@ -2165,7 +2171,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     { wchar_t *slash = wcsrchr(root, L'\\'); if (slash) *slash = 0; }
     SetCurrentDirectoryW(root);
     int argc = 0; wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    int first = 1, play_now = 0, classic = 0;
+    int first = 1, play_now = 0;
     if (argc >= 3 && !wcscmp(argv[1], L"--after")) { /* an in-game restart waits for the previous game process (its GPU device) */
         HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)wcstoul(argv[2], NULL, 10));
         if (old) { WaitForSingleObject(old, 30000); CloseHandle(old); }
@@ -2176,17 +2182,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     for (int i = first; i < argc; ++i) {
         if (!wcscmp(argv[i], L"--game") && i + 1 < argc) game_argument = argv[++i];
         else if (!wcscmp(argv[i], L"--play")) play_now = 1;
-        else if (!wcscmp(argv[i], L"--classic")) classic = 1;
         else if (!wcscmp(argv[i], L"--check-host") && i + 1 < argc) check_host = argv[++i];
         else if (!wcscmp(argv[i], L"--help") || !wcscmp(argv[i], L"-h")) {
-            logw(L"SacredFire.exe [--play] [--classic] [--game <folder>] [game options]\n"
-                 L"  Without --play: the modern launcher (--classic: the old Win32 window). --play starts the game with the saved settings.\n"
+            logw(L"SacredFire.exe [--play] [--game <folder>] [game options]\n"
+                 L"  Without --play: the launcher window. --play starts the game with the saved settings.\n"
                  L"  BB_DATA_DIR, BB_GAME_DIR, BB_LOG_DIR, BB_TIMEOUT and the other variables of run.sh apply.\n");
             return 0;
         } else if (extra_count < 64) extra[extra_count++] = argv[i];
     }
     const wchar_t *data_env = env_or(L"BB_DATA_DIR", NULL);
-    if (data_env) { if (!GetFullPathNameW(data_env, PATHW, data, NULL)) { fail(L"BB_DATA_DIR is not a usable path"); return 2; } }
+    if (data_env) { if (!GetFullPathNameW(data_env, PATHW, data, NULL)) { fail(L"BB_DATA_DIR kullanılabilir bir yol değil"); return 2; } }
 #ifdef UFC3_DIAGNOSTIC_PACKAGE
     else join(data, PATHW, root, L"diagnostic-data"); /* the diagnostic run keeps its data beside the exe */
 #else
@@ -2216,12 +2221,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     else if (env_or(L"BB_GAME_DIR", NULL)) { wcsncpy(settings.game, env_or(L"BB_GAME_DIR", L""), PATHW - 1); settings.game[PATHW - 1] = 0; }
     if (play_now) {
         open_log_file(NULL);
-        if (!settings.game[0]) { fail(L"No game folder: start the launcher once to choose it, or use --game <folder>."); return 2; }
+        if (!settings.game[0]) { fail(L"Oyun klasörü yok: seçmek için launcher'ı bir kez aç veya --game <klasör> kullan."); return 2; }
         settings_save();
         const DWORD code = play(extra, extra_count);
         if (log_file) fclose(log_file);
         return (int)code;
     }
-    if (!classic && !game_argument && extra_count == 0 && start_modern_launcher()) return 0;
     return gui(instance, extra, extra_count);
 }
