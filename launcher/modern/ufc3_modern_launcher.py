@@ -366,27 +366,35 @@ REASONS = {
     'ok': 'Available',
     'no_nvidia': 'DLSS needs an NVIDIA GeForce RTX graphics card. It is not available on AMD or Intel GPUs.',
     'not_rtx': 'DLSS needs an RTX card (RTX 20 series or newer). GTX and older cards cannot run it.',
-    'engine_missing': 'This build of the game engine has no DLSS 4 module yet, so the option stays locked '
-                      'instead of risking a crash.',
-    'dll_missing': 'nvngx_dlss.dll was not found next to the game (bin\\). Put NVIDIA\'s DLSS library there.',
+    'engine_missing': 'DLSS 4 is selected, but this build of the game engine has no DLSS module yet: the game '
+                      'runs with AMD FSR 1.0 until the engine gets it.',
+    'dll_missing': 'DLSS 4 is selected, but nvngx_dlss.dll was not found in bin\\: the game runs with AMD FSR 1.0 '
+                   'until the file is there.',
     'crash_guard': 'DLSS 4 was switched off automatically because the last DLSS session did not end cleanly.',
 }
 
 
 def dlss_status(gpus, guard):
+    """The option is open on any RTX card unless the crash guard tripped. A missing engine module or a
+    missing nvngx_dlss.dll no longer locks it: the game then runs the FSR 1.0 present path (`ready` is
+    False and `notice` says so), so a selection can never leave the image un-upscaled or crash."""
     nvidia = [g for g in gpus if g['vendor'] == 'nvidia']
     code = 'ok'
     if not nvidia:
         code = 'no_nvidia'
     elif not any(g['rtx'] for g in nvidia):
         code = 'not_rtx'
-    elif not engine_features().get('dlss4'):
-        code = 'engine_missing'
-    elif find_dlss_dll() is None:
-        code = 'dll_missing'
     elif guard.get('disabled'):
         code = 'crash_guard'
-    return dict(available=code == 'ok', code=code, reason=REASONS[code],
+    engine_module = bool(engine_features().get('dlss4'))
+    dll_found = find_dlss_dll() is not None
+    notice = ''
+    if code == 'ok' and not engine_module:
+        notice = REASONS['engine_missing']
+    elif code == 'ok' and not dll_found:
+        notice = REASONS['dll_missing']
+    return dict(available=code == 'ok', code=code, reason=REASONS[code], engine_module=engine_module, dll_found=dll_found,
+                ready=code == 'ok' and engine_module and dll_found, notice=notice,
                 multi_gpu=len([g for g in gpus if g['vendor'] in ('nvidia', 'amd', 'intel')]) > 1 and code == 'ok')
 
 
@@ -429,8 +437,10 @@ def game_env(settings, status, inherited=None):
         put('BB_UPSCALER', 'dlss4')
         put('BB_DLSS_MODE', settings['dlss_mode'])
         put('BB_DLSS_FALLBACK', 'fsr1')
-        put('BB_FSR1', '0')
+        put('BB_FSR1', '0' if status.get('ready', True) else '1')  # FSR 1.0 stays on until the engine has DLSS
         notes.append('Upscaling: NVIDIA DLSS 4 (%s)' % settings['dlss_mode'])
+        if status.get('notice'):
+            notes.append(status['notice'])
     else:
         for key in ('BB_UPSCALER', 'BB_DLSS_MODE', 'BB_DLSS_FALLBACK'):
             if key not in base:
