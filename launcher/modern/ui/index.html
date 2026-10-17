@@ -358,6 +358,7 @@ function render() {
   const notes = [];
   const guard = S.guard && S.guard.disabled;
   if (guard) notes.push(`<div class="banner"><div class="grow"><b>DLSS 4 was switched off.</b> ${S.guard.unclean ? 'The last DLSS session did not end cleanly.' : 'The last DLSS session ended with code ' + esc(S.guard.code) + '.'} The game uses FSR 1.0 until you re-enable it.</div><button class="btn" data-act="reset-dlss">Re-enable DLSS</button></div>`);
+  if (!locked && s.upscaler === 'dlss4' && S.dlss.notice) notes.push(`<div class="banner info"><div class="grow"><b>DLSS 4 selected.</b> ${esc(S.dlss.notice)}</div><button class="btn" data-act="use-fsr">Use FSR 1.0</button></div>`);
   if (locked && !guard) notes.push(`<div class="banner info"><div class="grow"><b>DLSS 4 is not available on this PC.</b> ${esc(S.dlss.reason)} The game will use FSR 1.0.</div><button class="btn" data-act="use-fsr">Use FSR 1.0</button></div>`);
   if (S.env_overrides.length) notes.push(`<div class="banner info"><div class="grow">Set in your environment (wins over these settings): <b>${esc(S.env_overrides.join(', '))}</b></div></div>`);
   $('banners').innerHTML = notes.join(''); $('vbanners').innerHTML = notes.join('');
