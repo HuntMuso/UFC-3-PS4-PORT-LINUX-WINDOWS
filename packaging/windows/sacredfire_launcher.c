@@ -2133,6 +2133,25 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
     return 0;
 }
 
+/* The modern launcher (launcher\modern\ufc3_modern_launcher.py, the bundled pythonw.exe: no console
+ * window, no .cmd): UFC3.exe with no arguments opens it and exits. `--classic` (or a package without
+ * the modern launcher) opens the Win32 window below instead; `--play` and the other command line
+ * switches never go through it, because the modern launcher's Play runs `UFC3.exe --play`. */
+static int start_modern_launcher(void) {
+    wchar_t pythonw[PATHW], script_path[PATHW];
+    join(pythonw, PATHW, root, L"python\\pythonw.exe");
+    join(script_path, PATHW, root, L"launcher\\modern\\ufc3_modern_launcher.py");
+    if (!exists(pythonw) || !exists(script_path)) return 0;
+    static wchar_t line[32768];
+    line[0] = 0;
+    append_argument(line, 32768, pythonw); append_argument(line, 32768, script_path);
+    STARTUPINFOW startup = {.cb = sizeof(startup)};
+    PROCESS_INFORMATION process;
+    if (!CreateProcessW(NULL, line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, root, &startup, &process)) return 0;
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    return 1;
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
     (void)previous; (void)command_line; (void)show;
     /* Started from a console (cmd, a script): its output stays there as well. */
@@ -2146,7 +2165,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     { wchar_t *slash = wcsrchr(root, L'\\'); if (slash) *slash = 0; }
     SetCurrentDirectoryW(root);
     int argc = 0; wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    int first = 1, play_now = 0;
+    int first = 1, play_now = 0, classic = 0;
     if (argc >= 3 && !wcscmp(argv[1], L"--after")) { /* an in-game restart waits for the previous game process (its GPU device) */
         HANDLE old = OpenProcess(SYNCHRONIZE, FALSE, (DWORD)wcstoul(argv[2], NULL, 10));
         if (old) { WaitForSingleObject(old, 30000); CloseHandle(old); }
@@ -2157,10 +2176,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
     for (int i = first; i < argc; ++i) {
         if (!wcscmp(argv[i], L"--game") && i + 1 < argc) game_argument = argv[++i];
         else if (!wcscmp(argv[i], L"--play")) play_now = 1;
+        else if (!wcscmp(argv[i], L"--classic")) classic = 1;
         else if (!wcscmp(argv[i], L"--check-host") && i + 1 < argc) check_host = argv[++i];
         else if (!wcscmp(argv[i], L"--help") || !wcscmp(argv[i], L"-h")) {
-            logw(L"SacredFire.exe [--play] [--game <folder>] [game options]\n"
-                 L"  Without --play: the launcher window. --play starts the game with the saved settings.\n"
+            logw(L"SacredFire.exe [--play] [--classic] [--game <folder>] [game options]\n"
+                 L"  Without --play: the modern launcher (--classic: the old Win32 window). --play starts the game with the saved settings.\n"
                  L"  BB_DATA_DIR, BB_GAME_DIR, BB_LOG_DIR, BB_TIMEOUT and the other variables of run.sh apply.\n");
             return 0;
         } else if (extra_count < 64) extra[extra_count++] = argv[i];
@@ -2202,5 +2222,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, 
         if (log_file) fclose(log_file);
         return (int)code;
     }
+    if (!classic && !game_argument && extra_count == 0 && start_modern_launcher()) return 0;
     return gui(instance, extra, extra_count);
 }
