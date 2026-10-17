@@ -171,13 +171,21 @@ class DlssGateTests(Fixture):
         self.enable_engine_dlss()
         self.assertEqual(self.code(GTX), 'not_rtx')
 
-    def test_engine_without_module_stays_locked_even_on_rtx(self):
-        self.assertEqual(self.code(RTX), 'engine_missing')
+    def test_rtx_is_open_even_without_engine_module_or_dll(self):
+        status = ml.dlss_status(RTX, {})
+        self.assertEqual(status['code'], 'ok')
+        self.assertTrue(status['available'])
+        self.assertFalse(status['ready'])
+        self.assertIn('no DLSS module', status['notice'])
         (self.root / 'share' / 'engine-features.json').write_text('{"dlss4": true}')
-        self.assertEqual(self.code(RTX), 'dll_missing')
-        (self.root / 'share' / 'engine-features.json').write_text('{"dlss4": false}')
+        status = ml.dlss_status(RTX, {})
+        self.assertTrue(status['available'])
+        self.assertFalse(status['ready'])
+        self.assertIn('nvngx_dlss.dll', status['notice'])
         (self.root / 'bin' / 'nvngx_dlss.dll').write_bytes(b'x')
-        self.assertEqual(self.code(RTX), 'engine_missing')
+        status = ml.dlss_status(RTX, {})
+        self.assertTrue(status['ready'])
+        self.assertEqual(status['notice'], '')
 
     def test_all_gates_open(self):
         self.enable_engine_dlss()
@@ -217,9 +225,11 @@ class EnvTests(Fixture):
         self.assertIn('BB_UPSCALER', drop)
         self.assertTrue(any('not available' in n for n in notes))
 
-    def test_engine_without_module_never_receives_dlss(self):
-        setv, _, _ = ml.game_env(self.settings(), ml.dlss_status(RTX, {}), {})
-        self.assertNotIn('BB_UPSCALER', setv)
+    def test_engine_without_module_keeps_fsr1_as_the_live_upscaler(self):
+        setv, _, notes = ml.game_env(self.settings(), ml.dlss_status(RTX, {}), {})
+        self.assertEqual(setv['BB_UPSCALER'], 'dlss4')
+        self.assertEqual(setv['BB_FSR1'], '1')
+        self.assertTrue(any('no DLSS module' in n for n in notes))
 
     def test_user_environment_wins(self):
         self.enable_engine_dlss()
