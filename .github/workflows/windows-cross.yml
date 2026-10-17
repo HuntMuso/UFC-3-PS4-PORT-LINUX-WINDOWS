@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['src/**', 'gpu/**', 'scripts/**', 'cmake/**', 'packaging/windows/**', '.github/workflows/windows-cross.yml']
+    paths: ['src/**', 'gpu/**', 'scripts/**', 'cmake/**', 'launcher/**', 'packaging/windows/**', '.github/workflows/windows-cross.yml']
 
 jobs:
   cross-build:
@@ -47,6 +47,16 @@ jobs:
           wine=$(command -v wine || command -v wine64)
           cp out/windows/toolchain/llvm-mingw-*/x86_64-w64-mingw32/bin/{libwinpthread-1.dll,libc++.dll,libunwind.dll} out/windows/tests/ 2>/dev/null || true
           WINEDEBUG=-all "$wine" out/windows/tests/abi_probe.exe
+      - name: NVIDIA DLSS library (nvngx_dlss.dll)
+        # NVIDIA's public DLSS SDK repository; redistribution under its license (third_party/nvidia/LICENSE.txt).
+        # If the download fails the archive is still built, only without the DLL.
+        continue-on-error: true
+        run: |
+          mkdir -p third_party/nvidia
+          base=https://raw.githubusercontent.com/NVIDIA/DLSS/main
+          curl -fsSL --retry 3 "$base/lib/Windows_x86_64/rel/nvngx_dlss.dll" -o third_party/nvidia/nvngx_dlss.dll
+          curl -fsSL --retry 3 "$base/LICENSE.txt" -o third_party/nvidia/LICENSE.txt || true
+          test "$(head -c 2 third_party/nvidia/nvngx_dlss.dll)" = "MZ"
       - name: Candidate archive
         run: BB_ALLOW_DIRTY=1 bash scripts/package-windows.sh
       - uses: actions/upload-artifact@v4
