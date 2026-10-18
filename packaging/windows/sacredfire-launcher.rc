@@ -1,6 +1,7 @@
 // SacredFire (Windows): the application manifest and version block of the game executable
 // and the other console programs (compiled with llvm-windres through CMake).
 #include <winver.h>
+1 ICON "sacredfire-launcher.ico"
 1 24 "sacredfire-launcher.manifest"
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 0,3,0,0
