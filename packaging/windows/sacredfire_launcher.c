@@ -20,9 +20,12 @@
  * when started from one.
  * Command line: `--play` starts the game at once with the saved settings and no window (Steam
  * shortcuts); `--game <folder>` sets the folder; other arguments go to the game.
- * Look (UFC-28): the colours of the UFC 3 retail cover (near-black, gold, UFC red for Play/Stop),
- * owner-drawn buttons and check boxes, sections drawn by the window; the banner shows the game's
- * own sce_sys\icon0.png (or pic1.png) read with WIC from the user's dump: no EA art is shipped.
+ * Look (UFC-49): an Epic Games Launcher style shell, all Turkish, still one native Win32 program (no
+ * browser, no console, no script): a borderless window with a sidebar (Kütüphane, Görüntü, Çevrimiçi,
+ * Gelişmiş, Kayıtlar), a hero banner with the big Play button, rounded cards, switches and a Play/Stop
+ * button that is always in the sidebar. The banner is the game's own sce_sys\pic1.png (or icon0.png)
+ * read with WIC from the user's dump: no EA art is shipped. Every setting, id, ini key and the play
+ * pipeline are unchanged from the previous window.
  * Game resolution 2K / 4K (experimental, UFC-45/46): PS4 Pro with a 3840x2160 VideoOut and the
  * scene patch of patches\experiments\ufc46-1440p / ufc45-4k; in game: VIDEO -> Favor Resolution.
  * Data (generated files, saves, shader cache, bbport.ini, logs): %LOCALAPPDATA%\SacredFire, or
@@ -1221,253 +1224,204 @@ static int running;
 static float scale = 1.0f;
 static HFONT ui_font; /* Segoe UI at the system DPI (the Controls window uses it too) */
 static int sx(int v) { return (int)(v * scale + 0.5f); }
+
+/* ---- the look: an Epic Games Launcher style shell (UFC-49) ----
+ * A borderless window: a sidebar with the pages (Kütüphane, Görüntü, Çevrimiçi, Gelişmiş,
+ * Kayıtlar), a hero banner with the big Play button on the first page, and rounded cards for
+ * the settings. Everything is plain Win32 + GDI (no browser, no console, no extra DLL): the
+ * window paints the chrome, the banner and the cards; statics, edits and lists take their
+ * colours from WM_CTLCOLOR*; buttons and switches are owner-drawn. The settings are the same
+ * controls, the same ids and the same sacredfire.ini / bbport.ini keys as before: only the
+ * layout and the paint changed. */
+#define HEX(v) RGB(((v) >> 16) & 255, ((v) >> 8) & 255, (v) & 255)
+#define C_SIDEBAR HEX(0x101014)
+#define C_BACKGROUND HEX(0x18181C)
+#define C_CARD HEX(0x222228)
+#define C_BORDER HEX(0x30303A)
+#define C_INPUT HEX(0x2D2D35)
+#define C_LOG HEX(0x131316)
+#define C_ACCENT HEX(0x0078F2)
+#define C_ACCENT_HOT HEX(0x2D91FF)
+#define C_ACCENT_DOWN HEX(0x005FC4)
+#define C_TEXT HEX(0xF5F5F7)
+#define C_TEXT_DIM HEX(0xA4A4B0)
+#define C_TEXT_OFF HEX(0x666672)
+#define C_RED HEX(0xE5322D)
+#define C_GREEN HEX(0x3DD17A)
+enum { CLIENT_W = 1120, CLIENT_H = 700, SIDEBAR_W = 232, TITLE_H = 40, HERO_W = CLIENT_W - SIDEBAR_W, HERO_H = 390 };
+enum { PAGE_HOME, PAGE_VIDEO, PAGE_ONLINE, PAGE_ADVANCED, PAGE_LOGS, PAGE_COUNT };
+enum { HOVER_NONE = -1, HOVER_PLAY = 20, HOVER_MINIMIZE, HOVER_CLOSE };
+static const wchar_t *const page_names[PAGE_COUNT] = {L"Kütüphane", L"Görüntü", L"Çevrimiçi", L"Gelişmiş", L"Kayıtlar"};
+/* Segoe MDL2 Assets glyphs (Windows 10 and 11). */
+static const wchar_t *const page_icons[PAGE_COUNT] = {L"\xE7FC", L"\xE7F4", L"\xE774", L"\xE713", L"\xE8A5"};
+static const wchar_t *const page_subtitles[PAGE_COUNT] = {
+    L"", L"Çözünürlük, ölçekleme ve kare hızı.", L"Arkadaşlarınla özel sunucu üzerinden oyna.",
+    L"Geliştirici seçenekleri ve araçlar.", L"Oturum kayıtları ve veri klasörü."};
+/* The cards of each page, at 96 DPI (sx scales them). */
+static const struct { int page, x, y, w, h; const wchar_t *title; } cards[] = {
+    {PAGE_HOME, 264, 414, 520, 254, L"OYUN"}, {PAGE_HOME, 800, 414, 288, 254, L"KONTROLCÜ"},
+    {PAGE_VIDEO, 264, 140, 400, 300, L"ÇÖZÜNÜRLÜK VE ÖLÇEKLEME"}, {PAGE_VIDEO, 688, 140, 400, 300, L"PERFORMANS VE SUNUM"},
+    {PAGE_VIDEO, 264, 460, 824, 100, L"NOT"},
+    {PAGE_ONLINE, 264, 140, 520, 300, L"BAĞLANTI"}, {PAGE_ONLINE, 800, 140, 288, 300, L"NASIL ÇALIŞIR?"},
+    {PAGE_ADVANCED, 264, 140, 400, 260, L"GELİŞTİRİCİ SEÇENEKLERİ"}, {PAGE_ADVANCED, 688, 140, 400, 260, L"ARAÇLAR"},
+    {PAGE_LOGS, 264, 140, 824, 122, L"KAYIT KLASÖRÜ"}};
+static HBRUSH brush_background, brush_card, brush_input, brush_log;
+static HFONT font_section, font_title, font_small, font_log, font_action, font_hero, font_nav, font_icon, font_caption;
+static int hot_id;                        /* the owner-drawn button under the mouse */
+static int hover_item = HOVER_NONE;       /* the sidebar item / window button under the mouse */
+static unsigned char check_state[ID_LAST - 100], is_check[ID_LAST - 100];
+static int current_page, build_page;
+static char version_text[64];
+static wchar_t status_text[200] = L"Hazır";
+static int status_kind;                   /* 0 ready, 1 running, 2 the last run ended badly */
+/* Every control belongs to a page; only the current page's controls are shown. */
+typedef struct { HWND window; int page; } PageChild;
+static PageChild page_children[160];
+static int page_child_count;
+static HWND dim_text[96]; /* secondary text: labels and notes */
+static int dim_count;
+
 static HWND make(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id) {
     HWND h_wnd = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), main_window, (HMENU)(INT_PTR)id,
                                  GetModuleHandleW(NULL), NULL);
     SendMessageW(h_wnd, WM_SETFONT, (WPARAM)ui_font, TRUE);
     if (id >= 100 && id < ID_LAST) controls[id - 100] = h_wnd;
+    if (page_child_count < COUNT(page_children)) page_children[page_child_count++] = (PageChild){.window = h_wnd, .page = build_page};
     return h_wnd;
 }
 static HWND control(int id) { return controls[id - 100]; }
-
-/* ---- the look: the UFC 3 retail cover (near-black stadium, gold belts, UFC red) ----
- * The window paints the background, the banner and the sections; statics, edits and lists take
- * their colours from WM_CTLCOLOR*; buttons and check boxes are owner-drawn (the themed ones
- * ignore text colours). Red is for Play and Stop only. */
-#define HEX(v) RGB(((v) >> 16) & 255, ((v) >> 8) & 255, (v) & 255)
-#define C_BACKGROUND HEX(0x0B0B0D)
-#define C_PANEL HEX(0x16161A)
-#define C_BORDER HEX(0x2A2A30)
-#define C_INPUT HEX(0x1F1F25)
-#define C_LOG HEX(0x101013)
-#define C_GOLD HEX(0xC9A24A)
-#define C_GOLD_LIGHT HEX(0xE8C872)
-#define C_TEXT HEX(0xF2F2F2)
-#define C_TEXT_DIM HEX(0xA0A0A8)
-#define C_TEXT_OFF HEX(0x5C5C66)
-#define C_RED HEX(0xD20A0A)
-enum { CLIENT_W = 900, CLIENT_H = 884, BANNER_H = 120 };
-/* The sections, at 96 DPI (sx scales them). */
-static const struct { int x, y, w, h; const wchar_t *title; } panels[] = {
-    {16, 134, 426, 214, L"OYUN"}, {16, 360, 426, 220, L"ÇEVRİMİÇİ"},
-    {458, 134, 426, 330, L"GÖRÜNTÜ"}, {458, 476, 426, 104, L"GELİŞMİŞ"},
-    {16, 592, 868, 88, L"KAYITLAR"}};
-static HBRUSH brush_background, brush_panel, brush_input, brush_log;
-static HFONT font_section, font_title, font_small, font_log, font_action;
-static int hot_id;                       /* the owner-drawn button under the mouse */
-static unsigned char check_state[ID_LAST - 100], is_check[ID_LAST - 100];
-static HWND notes[8]; static int note_count; /* secondary text */
-static HBITMAP banner_art; static int banner_art_w, banner_art_h;
 static int checked(int id) { return check_state[id - 100]; }
 static void set_checked(int id, int on) {
     if (check_state[id - 100] == !!on) return;
     check_state[id - 100] = (unsigned char)!!on;
     InvalidateRect(control(id), NULL, FALSE);
 }
-static HFONT make_font(int height, int weight, const wchar_t *face) {
-    LOGFONTW f = {.lfHeight = -sx(height), .lfWeight = weight, .lfCharSet = DEFAULT_CHARSET, .lfQuality = CLEARTYPE_QUALITY};
+static HFONT make_font(int height, int weight, int italic, const wchar_t *face) {
+    LOGFONTW f = {.lfHeight = -sx(height), .lfWeight = weight, .lfItalic = (BYTE)italic, .lfCharSet = DEFAULT_CHARSET, .lfQuality = CLEARTYPE_QUALITY};
     wcsncpy(f.lfFaceName, face, LF_FACESIZE - 1);
     return CreateFontIndirectW(&f);
 }
-/* uxtheme / dwmapi, loaded when present: dark scroll bars and lists, a dark title bar. */
+/* uxtheme / dwmapi, loaded when present: dark scroll bars and lists, a dark title bar, and the
+ * rounded corners of Windows 11 for the borderless window. */
 static HRESULT (WINAPI *p_SetWindowTheme)(HWND, LPCWSTR, LPCWSTR);
 static void dark_theme(HWND h, const wchar_t *name) { if (p_SetWindowTheme) p_SetWindowTheme(h, name, NULL); }
-static void theme_load(HWND window) {
-    HMODULE ux = LoadLibraryW(L"uxtheme.dll");
-    if (ux) { FARPROC f = GetProcAddress(ux, "SetWindowTheme"); if (f) memcpy(&p_SetWindowTheme, &f, sizeof f); }
+static void theme_load(HWND window, int borderless) {
+    if (!p_SetWindowTheme) {
+        HMODULE ux = LoadLibraryW(L"uxtheme.dll");
+        if (ux) { FARPROC f = GetProcAddress(ux, "SetWindowTheme"); if (f) memcpy(&p_SetWindowTheme, &f, sizeof f); }
+    }
     HMODULE dwm = LoadLibraryW(L"dwmapi.dll");
     FARPROC f = dwm ? GetProcAddress(dwm, "DwmSetWindowAttribute") : NULL;
     if (!f) return;
     HRESULT (WINAPI *set)(HWND, DWORD, LPCVOID, DWORD); memcpy(&set, &f, sizeof f);
-    const BOOL dark = TRUE; const COLORREF caption = C_BACKGROUND, border = C_BORDER;
+    const BOOL dark = TRUE;
     if (FAILED(set(window, 20, &dark, sizeof dark))) set(window, 19, &dark, sizeof dark); /* DWMWA_USE_IMMERSIVE_DARK_MODE */
-    set(window, 35, &caption, sizeof caption); set(window, 34, &border, sizeof border); /* Windows 11: caption / border colour */
+    if (borderless) { const DWORD round = 2; set(window, 33, &round, sizeof round); }    /* DWMWA_WINDOW_CORNER_PREFERENCE: DWMWCP_ROUND */
+    else { const COLORREF caption = C_BACKGROUND, border = C_BORDER; set(window, 35, &caption, sizeof caption); set(window, 34, &border, sizeof border); }
 }
 static void fill(HDC dc, RECT r, COLORREF c) { SetDCBrushColor(dc, c); FillRect(dc, &r, GetStockObject(DC_BRUSH)); }
-static void rounded(HDC dc, RECT r, COLORREF face, COLORREF border, int width, int radius) {
-    HPEN pen = CreatePen(PS_INSIDEFRAME, width, border); HBRUSH brush = CreateSolidBrush(face);
+/* A rounded rectangle with a one pixel border; `radius` in device pixels. */
+static void round_rect(HDC dc, RECT r, COLORREF face, COLORREF border, int radius) {
+    HPEN pen = CreatePen(PS_INSIDEFRAME, 1, border); HBRUSH brush = CreateSolidBrush(face);
     HGDIOBJ old_pen = SelectObject(dc, pen), old_brush = SelectObject(dc, brush);
-    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
+    RoundRect(dc, r.left, r.top, r.right, r.bottom, radius * 2, radius * 2);
     SelectObject(dc, old_pen); SelectObject(dc, old_brush); DeleteObject(pen); DeleteObject(brush);
 }
-/* The banner: a warm stadium glow at the top fading into the background. */
-static COLORREF banner_color(int y) {
-    const int h = sx(BANNER_H), t = y < 0 ? 0 : y > h ? h : y;
-    return RGB(0x24 + (0x0B - 0x24) * t / h, 0x1D + (0x0B - 0x1D) * t / h, 0x12 + (0x0D - 0x12) * t / h);
+static void disc(HDC dc, RECT r, COLORREF color) {
+    HPEN pen = CreatePen(PS_SOLID, 1, color); HBRUSH brush = CreateSolidBrush(color);
+    HGDIOBJ old_pen = SelectObject(dc, pen), old_brush = SelectObject(dc, brush);
+    Ellipse(dc, r.left, r.top, r.right, r.bottom);
+    SelectObject(dc, old_pen); SelectObject(dc, old_brush); DeleteObject(pen); DeleteObject(brush);
 }
-/* <game>\sce_sys\icon0.png (or pic1.png) of the user's dump, scaled with WIC and laid over the
- * banner's colours once; nothing when the folder has neither. */
-static void banner_load(const wchar_t *game) {
-    if (banner_art) { DeleteObject(banner_art); banner_art = NULL; }
-    static const wchar_t *const names[] = {L"sce_sys\\icon0.png", L"sce_sys\\pic1.png"};
-    wchar_t path[PATHW]; int found = 0;
-    for (int i = 0; i < COUNT(names) && game[0] && !found; ++i) { join(path, PATHW, game, names[i]); found = exists(path); }
-    if (!found) return;
+static void draw_text(HDC dc, HFONT font, COLORREF color, RECT r, UINT flags, const wchar_t *text) {
+    SelectObject(dc, font); SetTextColor(dc, color); SetBkMode(dc, TRANSPARENT);
+    DrawTextW(dc, text, -1, &r, flags | DT_NOPREFIX);
+}
+
+/* ---- the hero banner of the first page ----
+ * <game>\sce_sys\pic1.png (the dump's own background art) scaled to cover the banner, with a
+ * dark fade on the left (the text), the top (the window buttons) and the bottom (the page).
+ * With only icon0.png the icon sits on the right of a generated blue gradient; with neither,
+ * just the gradient. Nothing from the game is shipped: the art is read from the user's dump. */
+static HBITMAP hero_bmp; static int hero_w, hero_h;
+/* The file scaled to cover out_w x out_h (centre crop), premultiplied BGRA; NULL on any failure. */
+static unsigned char *wic_load(const wchar_t *path, UINT out_w, UINT out_h) {
     IWICImagingFactory *factory = NULL; IWICBitmapDecoder *decoder = NULL; IWICBitmapFrameDecode *frame = NULL;
     IWICBitmapScaler *scaler = NULL; IWICFormatConverter *converter = NULL;
-    unsigned char *pixels = NULL; UINT w = 0, h = 0, tw = 0, th = 0;
-    if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void **)&factory))) return;
+    unsigned char *pixels = NULL; UINT w = 0, h = 0;
+    if (!out_w || !out_h) return NULL;
+    if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void **)&factory))) return NULL;
     if (SUCCEEDED(factory->lpVtbl->CreateDecoderFromFilename(factory, path, NULL, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) &&
         SUCCEEDED(decoder->lpVtbl->GetFrame(decoder, 0, &frame)) && SUCCEEDED(frame->lpVtbl->GetSize(frame, &w, &h)) && w && h) {
-        th = (UINT)sx(BANNER_H - 24); tw = w * th / h;                         /* icon0: square; pic1: 16:9 */
-        if (tw > (UINT)sx(190)) { tw = (UINT)sx(190); th = h * tw / w; }
-        if (tw && th && SUCCEEDED(factory->lpVtbl->CreateBitmapScaler(factory, &scaler)) &&
-            SUCCEEDED(scaler->lpVtbl->Initialize(scaler, (IWICBitmapSource *)frame, tw, th, WICBitmapInterpolationModeFant)) &&
+        UINT sw = out_w, sh = (UINT)((unsigned long long)h * out_w / w);
+        if (sh < out_h) { sh = out_h; sw = (UINT)((unsigned long long)w * out_h / h); }
+        if (sw < out_w) sw = out_w;
+        if (SUCCEEDED(factory->lpVtbl->CreateBitmapScaler(factory, &scaler)) &&
+            SUCCEEDED(scaler->lpVtbl->Initialize(scaler, (IWICBitmapSource *)frame, sw, sh, WICBitmapInterpolationModeFant)) &&
             SUCCEEDED(factory->lpVtbl->CreateFormatConverter(factory, &converter)) &&
             SUCCEEDED(converter->lpVtbl->Initialize(converter, (IWICBitmapSource *)scaler, &GUID_WICPixelFormat32bppPBGRA,
-                                                    WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom)) &&
-            (pixels = malloc((size_t)tw * th * 4)) &&
-            SUCCEEDED(converter->lpVtbl->CopyPixels(converter, NULL, tw * 4, tw * th * 4, pixels))) {
-            BITMAPINFO info = {.bmiHeader = {.biSize = sizeof(BITMAPINFOHEADER), .biWidth = (LONG)tw, .biHeight = -(LONG)th, .biPlanes = 1,
-                                             .biBitCount = 32, .biCompression = BI_RGB}};
-            void *bits = NULL;
-            banner_art = CreateDIBSection(NULL, &info, DIB_RGB_COLORS, &bits, NULL, 0);
-            if (banner_art && bits) {
-                const int top = (sx(BANNER_H) - (int)th) / 2;
-                unsigned char *out = bits;
-                for (UINT y = 0; y < th; ++y) {
-                    const COLORREF bg = banner_color(top + (int)y);
-                    for (UINT x = 0; x < tw; ++x) {
-                        const unsigned char *p = pixels + ((size_t)y * tw + x) * 4; unsigned char *o = out + ((size_t)y * tw + x) * 4;
-                        const int a = 255 - p[3]; /* premultiplied over the banner */
-                        o[0] = (unsigned char)(p[0] + GetBValue(bg) * a / 255); o[1] = (unsigned char)(p[1] + GetGValue(bg) * a / 255);
-                        o[2] = (unsigned char)(p[2] + GetRValue(bg) * a / 255); o[3] = 255;
-                    }
-                }
-                banner_art_w = (int)tw; banner_art_h = (int)th;
-            } else if (banner_art) { DeleteObject(banner_art); banner_art = NULL; }
+                                                    WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom))) {
+            WICRect crop = {.X = (INT)((sw - out_w) / 2), .Y = (INT)((sh - out_h) / 2), .Width = (INT)out_w, .Height = (INT)out_h};
+            pixels = malloc((size_t)out_w * out_h * 4);
+            if (pixels && FAILED(converter->lpVtbl->CopyPixels(converter, &crop, out_w * 4, out_w * out_h * 4, pixels))) { free(pixels); pixels = NULL; }
         }
     }
-    free(pixels);
     if (converter) converter->lpVtbl->Release(converter);
     if (scaler) scaler->lpVtbl->Release(scaler);
     if (frame) frame->lpVtbl->Release(frame);
     if (decoder) decoder->lpVtbl->Release(decoder);
     factory->lpVtbl->Release(factory);
+    return pixels;
 }
-static void paint_window(HDC dc, RECT client) {
-    fill(dc, client, C_BACKGROUND);
-    SetBkMode(dc, TRANSPARENT);
-    /* The banner. */
-    const int banner_h = sx(BANNER_H);
-    for (int y = 0; y < banner_h; ++y) fill(dc, (RECT){0, y, client.right, y + 1}, banner_color(y));
-    int text_x = sx(24);
-    if (banner_art) {
-        const int top = (banner_h - banner_art_h) / 2;
-        HDC art = CreateCompatibleDC(dc); HGDIOBJ old = SelectObject(art, banner_art);
-        BitBlt(dc, sx(16), top, banner_art_w, banner_art_h, art, 0, 0, SRCCOPY);
-        SelectObject(art, old); DeleteDC(art);
-        SetDCPenColor(dc, C_GOLD); HGDIOBJ old_pen = SelectObject(dc, GetStockObject(DC_PEN)), old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, sx(16) - 1, top - 1, sx(16) + banner_art_w + 1, top + banner_art_h + 1);
-        SelectObject(dc, old_pen); SelectObject(dc, old_brush);
-        text_x = sx(16) + banner_art_w + sx(22);
+static int mix(int a, int b, int t256) { return a + (b - a) * t256 / 256; }
+static void hero_build(const wchar_t *game) {
+    if (hero_bmp) { DeleteObject(hero_bmp); hero_bmp = NULL; }
+    hero_w = sx(HERO_W); hero_h = sx(HERO_H);
+    BITMAPINFO info = {.bmiHeader = {.biSize = sizeof(BITMAPINFOHEADER), .biWidth = hero_w, .biHeight = -hero_h, .biPlanes = 1,
+                                     .biBitCount = 32, .biCompression = BI_RGB}};
+    unsigned char *out = NULL;
+    hero_bmp = CreateDIBSection(NULL, &info, DIB_RGB_COLORS, (void **)&out, NULL, 0);
+    if (!hero_bmp || !out) { if (hero_bmp) DeleteObject(hero_bmp); hero_bmp = NULL; return; }
+    unsigned char *art = NULL, *icon = NULL; const int icon_px = sx(200);
+    wchar_t path[PATHW];
+    if (game[0]) {
+        join(path, PATHW, game, L"sce_sys\\pic1.png");
+        if (exists(path)) art = wic_load(path, (UINT)hero_w, (UINT)hero_h);
+        if (!art) { join(path, PATHW, game, L"sce_sys\\icon0.png"); if (exists(path)) icon = wic_load(path, (UINT)icon_px, (UINT)icon_px); }
     }
-    RECT t = {text_x, sx(26), client.right - sx(16), sx(66)};
-    SelectObject(dc, font_title); SetTextColor(dc, C_GOLD);
-    DrawTextW(dc, L"EA SPORTS UFC 3 \x2014 yerel PC portu", -1, &t, DT_SINGLELINE | DT_LEFT | DT_BOTTOM | DT_NOPREFIX | DT_END_ELLIPSIS);
-    char version[64]; read_version(version, sizeof(version));
-    wchar_t line[160]; _snwprintf(line, 160, L"PS4 CUSA06534 \x00B7 SacredFire %hs \x00B7 kendi oyun dökümünüz gerekir", version); line[159] = 0;
-    t.top = sx(70); t.bottom = sx(90);
-    SelectObject(dc, ui_font); SetTextColor(dc, C_TEXT_DIM);
-    DrawTextW(dc, line, -1, &t, DT_SINGLELINE | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
-#ifdef UFC3_DIAGNOSTIC_PACKAGE
-    t.top = sx(92); t.bottom = sx(112); SetTextColor(dc, C_RED);
-    DrawTextW(dc, L"Windows diagnostic test: write windows + audit forced, data in diagnostic-data", -1, &t, DT_SINGLELINE | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
-#endif
-    fill(dc, (RECT){0, banner_h - sx(2), client.right, banner_h}, C_GOLD);
-    /* The sections: a panel, a gold bar and the title. */
-    SelectObject(dc, font_section);
-    for (int i = 0; i < COUNT(panels); ++i) {
-        RECT r = {sx(panels[i].x), sx(panels[i].y), sx(panels[i].x + panels[i].w), sx(panels[i].y + panels[i].h)};
-        rounded(dc, r, C_PANEL, C_BORDER, 1, sx(10));
-        fill(dc, (RECT){r.left + sx(12), r.top + sx(10), r.left + sx(15), r.top + sx(26)}, C_GOLD);
-        RECT title = {r.left + sx(22), r.top + sx(8), r.right - sx(12), r.top + sx(28)};
-        SetTextColor(dc, C_GOLD);
-        DrawTextW(dc, panels[i].title, -1, &title, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_NOPREFIX);
-    }
-}
-/* Owner-drawn: Play (red, gold border), Stop (red outline), the other buttons (dark, gold on
- * hover) and the check boxes (gold when on). */
-static void draw_button(const DRAWITEMSTRUCT *d) {
-    const int id = (int)d->CtlID;
-    HDC dc = d->hDC; RECT r = d->rcItem;
-    const int enabled = !(d->itemState & ODS_DISABLED), pressed = (d->itemState & ODS_SELECTED) != 0, hot = enabled && hot_id == id;
-    const int on_panel = id != ID_PLAY && id != ID_STOP && id != ID_STEAM;
-    fill(dc, r, on_panel ? C_PANEL : C_BACKGROUND);
-    wchar_t text[128]; GetWindowTextW(d->hwndItem, text, COUNT(text));
-    SetBkMode(dc, TRANSPARENT);
-    const int focus = (d->itemState & ODS_FOCUS) && !(d->itemState & ODS_NOFOCUSRECT);
-    if (id >= 100 && id < ID_LAST && is_check[id - 100]) {
-        const int on = check_state[id - 100], box = sx(16), top = r.top + (r.bottom - r.top - box) / 2;
-        RECT b = {r.left + 1, top, r.left + 1 + box, top + box};
-        rounded(dc, b, on ? (enabled ? C_GOLD : C_BORDER) : C_INPUT, !enabled ? C_BORDER : hot || on ? C_GOLD_LIGHT : HEX(0x4A4A52), 1, sx(4));
-        if (on) {
-            HPEN pen = CreatePen(PS_SOLID, sx(2), enabled ? C_BACKGROUND : C_TEXT_DIM); HGDIOBJ old = SelectObject(dc, pen);
-            const POINT mark[] = {{b.left + sx(4), b.top + sx(8)}, {b.left + sx(7), b.bottom - sx(4)}, {b.right - sx(4), b.top + sx(4)}};
-            Polyline(dc, mark, 3);
-            SelectObject(dc, old); DeleteObject(pen);
+    const int bg_r = GetRValue(C_BACKGROUND), bg_g = GetGValue(C_BACKGROUND), bg_b = GetBValue(C_BACKGROUND);
+    const int left_max = art ? 232 : 110, top_h = sx(90);
+    for (int y = 0; y < hero_h; ++y) {
+        const int v = y * 256 / hero_h, fy = y * 1000 / hero_h;
+        const int a_top = y < top_h ? 150 * (top_h - y) / top_h : 0;
+        int a_bottom = fy > 600 ? 256 * (fy - 600) / 400 : 0;
+        a_bottom = a_bottom * a_bottom / 256;
+        for (int x = 0; x < hero_w; ++x) {
+            unsigned char *o = out + ((size_t)y * (size_t)hero_w + (size_t)x) * 4;
+            int r, g, b;
+            if (art) {
+                const unsigned char *p = art + ((size_t)y * (size_t)hero_w + (size_t)x) * 4; const int na = 255 - p[3];
+                b = p[0] + bg_b * na / 255; g = p[1] + bg_g * na / 255; r = p[2] + bg_r * na / 255;
+            } else {
+                const int u = x * 256 / hero_w, glow = (u * u / 256) * (256 - v) / 256; /* strongest top right */
+                r = mix(0x12, 0x1A, glow); g = mix(0x16, 0x5C, glow); b = mix(0x22, 0xC8, glow);
+            }
+            const int lx = x * 1000 / hero_w;
+            const int a_left = 24 + (lx < 700 ? (left_max - 24) * (700 - lx) / 700 : 0);
+            const int keep = (256 - a_left) * (256 - a_top) / 256 * (256 - a_bottom) / 256; /* what of the picture is left */
+            o[0] = (unsigned char)mix(bg_b, b, keep); o[1] = (unsigned char)mix(bg_g, g, keep); o[2] = (unsigned char)mix(bg_r, r, keep); o[3] = 255;
         }
-        RECT t = r; t.left = b.right + sx(8);
-        SelectObject(dc, ui_font); SetTextColor(dc, !enabled ? C_TEXT_OFF : hot ? C_GOLD_LIGHT : C_TEXT);
-        DrawTextW(dc, text, -1, &t, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
-        if (focus) {
-            RECT f = t; DrawTextW(dc, text, -1, &f, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_CALCRECT);
-            OffsetRect(&f, 0, (r.bottom - r.top - (f.bottom - f.top)) / 2 - (f.top - r.top)); InflateRect(&f, sx(2), 0); DrawFocusRect(dc, &f);
-        }
-        return;
     }
-    COLORREF face, border, ink; int width = 1; HFONT font = ui_font;
-    if (id == ID_PLAY) {
-        face = !enabled ? HEX(0x3A1416) : pressed ? HEX(0xA00808) : hot ? HEX(0xE81C1C) : C_RED;
-        border = !enabled ? C_BORDER : hot ? C_GOLD_LIGHT : C_GOLD; ink = enabled ? C_TEXT : C_TEXT_DIM; width = sx(2); font = font_action;
-    } else if (id == ID_STOP) {
-        face = !enabled ? C_BACKGROUND : pressed ? HEX(0x3A0A0A) : hot ? HEX(0x260C0C) : C_BACKGROUND;
-        border = enabled ? C_RED : C_BORDER; ink = enabled ? HEX(0xFF4040) : C_TEXT_OFF; width = sx(2); font = font_action;
-    } else {
-        face = !enabled ? C_PANEL : pressed ? HEX(0x101014) : hot ? HEX(0x26262E) : C_INPUT;
-        border = !enabled ? C_BORDER : hot ? C_GOLD_LIGHT : HEX(0x3A3A42); ink = !enabled ? C_TEXT_OFF : hot ? C_GOLD_LIGHT : C_TEXT;
+    if (icon) { /* the game's icon as a tile on the right */
+        const int x0 = hero_w - icon_px - sx(64), y0 = sx(70);
+        for (int y = 0; y < icon_px && y0 + y < hero_h; ++y)
+            for (int x = 0; x < icon_px && x0 + x < hero_w; ++x) {
+                const unsigned char *p = icon + ((size_t)y * (size_t)icon_px + (size_t)x) * 4;
+                unsigned char *o = out + ((size_t)(y0 + y) * (size_t)hero_w + (size_t)(x0 + x)) * 4; const int na = 255 - p[3];
+                o[0] = (unsigned char)(p[0] + o[0] * na / 255); o[1] = (unsigned char)(p[1] + o[1] * na / 255); o[2] = (unsigned char)(p[2] + o[2] * na / 255);
+            }
     }
-    rounded(dc, r, face, border, width, sx(8));
-    SelectObject(dc, font); SetTextColor(dc, ink);
-    DrawTextW(dc, text, -1, &r, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
-    if (focus) { RECT f = r; InflateRect(&f, -sx(4), -sx(4)); DrawFocusRect(dc, &f); }
-}
-/* Hover for the owner-drawn buttons. */
-static LRESULT CALLBACK hover_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data_unused) {
-    (void)data_unused;
-    if (message == WM_MOUSEMOVE && hot_id != (int)id) {
-        const int previous = hot_id; hot_id = (int)id;
-        TRACKMOUSEEVENT track = {.cbSize = sizeof(track), .dwFlags = TME_LEAVE, .hwndTrack = window};
-        TrackMouseEvent(&track);
-        if (previous >= 100 && previous < ID_LAST && control(previous)) InvalidateRect(control(previous), NULL, FALSE);
-        InvalidateRect(window, NULL, FALSE);
-    } else if (message == WM_MOUSELEAVE && hot_id == (int)id) { hot_id = 0; InvalidateRect(window, NULL, FALSE); }
-    else if (message == WM_NCDESTROY) RemoveWindowSubclass(window, hover_proc, id);
-    return DefSubclassProc(window, message, wparam, lparam);
-}
-/* The window's controls, at 96 DPI. */
-static HWND label(const wchar_t *text, int x, int y, int w) { return make(L"STATIC", text, SS_CENTERIMAGE | SS_NOPREFIX, x, y, w, 24, 0); }
-static HWND note(const wchar_t *text, int x, int y, int w, int h) {
-    HWND n = make(L"STATIC", text, SS_NOPREFIX, x, y, w, h, 0);
-    SendMessageW(n, WM_SETFONT, (WPARAM)font_small, TRUE);
-    if (note_count < COUNT(notes)) notes[note_count++] = n;
-    return n;
-}
-static HWND button(const wchar_t *text, int x, int y, int w, int h, int id) {
-    HWND b = make(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
-    SetWindowSubclass(b, hover_proc, (UINT_PTR)id, 0);
-    return b;
-}
-static HWND checkbox(const wchar_t *text, int x, int y, int w, int id) { is_check[id - 100] = 1; return button(text, x, y, w, 22, id); }
-static HWND combo(int x, int y, int w, int id, int editable) {
-    HWND c = make(L"COMBOBOX", L"", (editable ? CBS_DROPDOWN | CBS_AUTOHSCROLL : CBS_DROPDOWNLIST) | WS_VSCROLL | WS_TABSTOP, x, y, w, 300, id);
-    dark_theme(c, L"DarkMode_CFD");
-    return c;
-}
-static HWND edit(const wchar_t *text, int x, int y, int w, int id) {
-    HWND e = make(L"EDIT", text, WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x, y, w, 24, id);
-    dark_theme(e, L"DarkMode_CFD");
-    return e;
+    free(art); free(icon);
 }
 static void fill_gamepads(void) {
     HWND combo = control(ID_GAMEPAD);
@@ -1611,11 +1565,115 @@ static int ctl_capture_key(const MSG *msg) {
     ctl_show_key(row);
     return 1;
 }
+/* The hero image behind a button laid over it, so its rounded corners blend in. */
+static void paint_behind(HDC dc, HWND window, RECT r) {
+    if (!hero_bmp) { fill(dc, r, C_BACKGROUND); return; }
+    RECT w; GetWindowRect(window, &w); MapWindowPoints(NULL, main_window, (POINT *)&w, 2);
+    HDC art = CreateCompatibleDC(dc); HGDIOBJ old = SelectObject(art, hero_bmp);
+    BitBlt(dc, r.left, r.top, r.right - r.left, r.bottom - r.top, art, w.left - sx(SIDEBAR_W) + r.left, w.top + r.top, SRCCOPY);
+    SelectObject(art, old); DeleteDC(art);
+}
+/* Owner-drawn: Play (blue), Stop (red outline), the other buttons (dark, lighter on hover), the
+ * switches (blue when on) and the buttons of the Controls window. */
+static void draw_button(const DRAWITEMSTRUCT *d) {
+    const int id = (int)d->CtlID;
+    HDC dc = d->hDC; RECT r = d->rcItem;
+    const int enabled = !(d->itemState & ODS_DISABLED), pressed = (d->itemState & ODS_SELECTED) != 0, hot = enabled && hot_id == id;
+    const int focus = (d->itemState & ODS_FOCUS) && !(d->itemState & ODS_NOFOCUSRECT);
+    const int in_controls = id >= ID_CTL_KEY;
+    wchar_t text[128]; GetWindowTextW(d->hwndItem, text, COUNT(text));
+    SetBkMode(dc, TRANSPARENT);
+    if (id == ID_PLAY || id == ID_STOP) paint_behind(dc, d->hwndItem, r); else fill(dc, r, in_controls ? C_BACKGROUND : C_CARD);
+    if (!in_controls && id >= 100 && id < ID_LAST && is_check[id - 100]) { /* a switch */
+        const int on = check_state[id - 100], track_w = sx(36), track_h = sx(20), top = r.top + (r.bottom - r.top - track_h) / 2;
+        const RECT track = {r.left, top, r.left + track_w, top + track_h};
+        const COLORREF color = !enabled ? C_BORDER : on ? (hot ? C_ACCENT_HOT : C_ACCENT) : (hot ? HEX(0x5C5C68) : HEX(0x4A4A55));
+        round_rect(dc, track, color, color, track_h / 2);
+        const int knob = track_h - sx(6), knob_x = on ? track.right - sx(3) - knob : track.left + sx(3);
+        const RECT dot = {knob_x, top + sx(3), knob_x + knob, top + sx(3) + knob};
+        disc(dc, dot, enabled ? C_TEXT : C_TEXT_OFF);
+        RECT t = r; t.left = track.right + sx(12);
+        draw_text(dc, ui_font, !enabled ? C_TEXT_OFF : hot ? C_TEXT : HEX(0xDADAE0), t, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS, text);
+        if (focus) {
+            RECT f = t; DrawTextW(dc, text, -1, &f, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_CALCRECT);
+            OffsetRect(&f, 0, (r.bottom - r.top - (f.bottom - f.top)) / 2 - (f.top - r.top)); InflateRect(&f, sx(2), 0); DrawFocusRect(dc, &f);
+        }
+        return;
+    }
+    COLORREF face, border, ink; HFONT font = ui_font; int radius = sx(8);
+    if (id == ID_PLAY || id == ID_CTL_SAVE) {
+        face = !enabled ? HEX(0x1B3A5E) : pressed ? C_ACCENT_DOWN : hot ? C_ACCENT_HOT : C_ACCENT; border = face;
+        ink = enabled ? HEX(0xFFFFFF) : C_TEXT_DIM;
+        if (id == ID_PLAY) { font = font_action; radius = sx(10); }
+    } else if (id == ID_STOP) {
+        face = !enabled ? HEX(0x1E1E24) : pressed ? HEX(0x3A0F10) : hot ? HEX(0x2E1214) : HEX(0x241214);
+        border = enabled ? C_RED : C_BORDER; ink = enabled ? HEX(0xFF6B66) : C_TEXT_OFF; font = font_action; radius = sx(10);
+    } else if (in_controls && id >= ID_CTL_KEY && id < ID_CTL_KEY + CTL_INPUTS) { /* a key box: blue while it waits for a key */
+        const int waiting = ctl_capture == id - ID_CTL_KEY;
+        face = pressed ? HEX(0x26262D) : hot ? HEX(0x3A3A44) : C_INPUT; border = waiting ? C_ACCENT_HOT : hot ? HEX(0x55555F) : HEX(0x3E3E48);
+        ink = waiting ? C_ACCENT_HOT : C_TEXT;
+    } else {
+        face = !enabled ? C_CARD : pressed ? HEX(0x26262D) : hot ? HEX(0x3E3E49) : HEX(0x33333C);
+        border = !enabled ? C_BORDER : hot ? HEX(0x5A5A66) : HEX(0x3E3E48); ink = !enabled ? C_TEXT_OFF : C_TEXT;
+    }
+    round_rect(dc, r, face, border, radius);
+    draw_text(dc, font, ink, r, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS, text);
+    if (focus) { RECT f = r; InflateRect(&f, -sx(4), -sx(4)); DrawFocusRect(dc, &f); }
+}
+/* Hover for the owner-drawn buttons. */
+static LRESULT CALLBACK hover_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR data_unused) {
+    (void)data_unused;
+    if (message == WM_MOUSEMOVE && hot_id != (int)id) {
+        const int previous = hot_id; hot_id = (int)id;
+        TRACKMOUSEEVENT track = {.cbSize = sizeof(track), .dwFlags = TME_LEAVE, .hwndTrack = window};
+        TrackMouseEvent(&track);
+        if (previous >= 100 && previous < ID_LAST && control(previous)) InvalidateRect(control(previous), NULL, FALSE);
+        InvalidateRect(window, NULL, FALSE);
+    } else if (message == WM_MOUSELEAVE && hot_id == (int)id) { hot_id = 0; InvalidateRect(window, NULL, FALSE); }
+    else if (message == WM_NCDESTROY) RemoveWindowSubclass(window, hover_proc, id);
+    return DefSubclassProc(window, message, wparam, lparam);
+}
+/* The window's controls, at 96 DPI. A label or a note is secondary text. */
+static void dim(HWND h) { if (dim_count < COUNT(dim_text)) dim_text[dim_count++] = h; }
+static HWND label(const wchar_t *text, int x, int y, int w) {
+    HWND l = make(L"STATIC", text, SS_CENTERIMAGE | SS_NOPREFIX, x, y, w, 18, 0);
+    SendMessageW(l, WM_SETFONT, (WPARAM)font_small, TRUE); dim(l);
+    return l;
+}
+static HWND note(const wchar_t *text, int x, int y, int w, int h) {
+    HWND n = make(L"STATIC", text, SS_NOPREFIX, x, y, w, h, 0);
+    SendMessageW(n, WM_SETFONT, (WPARAM)font_small, TRUE); dim(n);
+    return n;
+}
+static HWND button(const wchar_t *text, int x, int y, int w, int h, int id) {
+    HWND b = make(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
+    SetWindowSubclass(b, hover_proc, (UINT_PTR)id, 0);
+    return b;
+}
+static HWND checkbox(const wchar_t *text, int x, int y, int w, int id) { is_check[id - 100] = 1; return button(text, x, y, w, 24, id); }
+static HWND combo(int x, int y, int w, int id, int editable) {
+    HWND c = make(L"COMBOBOX", L"", (editable ? CBS_DROPDOWN | CBS_AUTOHSCROLL : CBS_DROPDOWNLIST) | WS_VSCROLL | WS_TABSTOP, x, y, w, 300, id);
+    dark_theme(c, L"DarkMode_CFD");
+    SendMessageW(c, CB_SETITEMHEIGHT, (WPARAM)-1, sx(20));
+    return c;
+}
+static HWND edit(const wchar_t *text, int x, int y, int w, int id) {
+    HWND e = make(L"EDIT", text, WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP, x, y, w, 28, id);
+    dark_theme(e, L"DarkMode_CFD");
+    return e;
+}
+
+/* ---- the Controls window: the same rows, in the same dark look ---- */
 static HWND ctl_make(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id) {
     HWND h_wnd = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), ctl_window,
                                  (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(h_wnd, WM_SETFONT, (WPARAM)ui_font, TRUE);
     return h_wnd;
+}
+static HWND ctl_button(const wchar_t *text, int x, int y, int w, int h, int id) {
+    HWND b = ctl_make(L"BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, y, w, h, id);
+    SetWindowSubclass(b, hover_proc, (UINT_PTR)id, 0);
+    return b;
 }
 static void ctl_refresh(void) { for (int i = 0; i < CTL_INPUTS; ++i) { ctl_show_key(i); ctl_show_pad(i); } }
 static LRESULT CALLBACK ctl_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -1636,6 +1694,11 @@ static LRESULT CALLBACK ctl_proc(HWND window, UINT message, WPARAM wparam, LPARA
         else if (id == ID_CTL_CANCEL) { ctl_capture = -1; DestroyWindow(window); }
         return 0;
     }
+    case WM_DRAWITEM: draw_button((const DRAWITEMSTRUCT *)lparam); return TRUE;
+    case WM_CTLCOLORBTN: return (LRESULT)brush_background;
+    case WM_CTLCOLORSTATIC: SetTextColor((HDC)wparam, C_TEXT); SetBkColor((HDC)wparam, C_BACKGROUND); return (LRESULT)brush_background;
+    case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX:
+        SetTextColor((HDC)wparam, C_TEXT); SetBkColor((HDC)wparam, C_INPUT); return (LRESULT)brush_input;
     case WM_CLOSE: ctl_capture = -1; DestroyWindow(window); return 0;
     case WM_DESTROY: ctl_window = NULL; EnableWindow(main_window, TRUE); SetForegroundWindow(main_window); return 0;
     }
@@ -1646,33 +1709,36 @@ static void controls_open(void) {
     static int registered;
     if (!registered) {
         WNDCLASSW wc = {.lpfnWndProc = ctl_proc, .hInstance = GetModuleHandleW(NULL), .hCursor = LoadCursorW(NULL, IDC_ARROW),
-                        .hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1), .lpszClassName = L"UFC3NativeControls"};
+                        .hbrBackground = brush_background, .lpszClassName = L"UFC3NativeControls", .hIcon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1))};
         RegisterClassW(&wc);
         registered = 1;
     }
     ctl_load(0);
-    const int rows_h = 26, top = 40, client_w = 640, client_h = top + CTL_INPUTS * rows_h + 56;
+    const int rows_h = 24, top = 52, client_w = 660, client_h = top + CTL_INPUTS * rows_h + 64;
     RECT r = {0, 0, sx(client_w), sx(client_h)};
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
     ctl_window = CreateWindowExW(WS_EX_DLGMODALFRAME, L"UFC3NativeControls", L"Kontroller", WS_CAPTION | WS_SYSMENU | WS_POPUP,
                                  CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, main_window, NULL,
                                  GetModuleHandleW(NULL), NULL);
     if (!ctl_window) return;
+    theme_load(ctl_window, 0);
     ctl_make(L"STATIC", L"Klavye: bir tuş kutusuna tıkla, sonra tuşa bas. Kontrolcü: bir düğme seç. Klavye ve "
-                        L"kontrolcü birlikte çalışır.", 0, 12, 8, 616, 30, 0);
+                        L"kontrolcü birlikte çalışır.", SS_NOPREFIX, 16, 10, 628, 36, 0);
     for (int i = 0; i < CTL_INPUTS; ++i) {
         const int y = top + i * rows_h;
-        ctl_make(L"STATIC", ctl_labels[i], SS_CENTERIMAGE, 12, y, 180, 22, 0);
-        ctl_key_buttons[i] = ctl_make(L"BUTTON", L"", BS_PUSHBUTTON, 196, y, 230, 22, ID_CTL_KEY + i);
+        ctl_make(L"STATIC", ctl_labels[i], SS_CENTERIMAGE | SS_NOPREFIX, 16, y, 180, 22, 0);
+        ctl_key_buttons[i] = ctl_button(L"", 200, y, 230, 22, ID_CTL_KEY + i);
         if (i < 17) {
-            ctl_pad_combos[i] = ctl_make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 436, y, 192, 300, ID_CTL_PAD + i);
+            ctl_pad_combos[i] = ctl_make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 442, y, 202, 300, ID_CTL_PAD + i);
+            dark_theme(ctl_pad_combos[i], L"DarkMode_CFD");
+            SendMessageW(ctl_pad_combos[i], CB_SETITEMHEIGHT, (WPARAM)-1, sx(16));
             for (int k = 0; k < COUNT(ctl_pad_labels); ++k) SendMessageW(ctl_pad_combos[i], CB_ADDSTRING, 0, (LPARAM)ctl_pad_labels[k]);
-        } else ctl_make(L"STATIC", L"(kontrolcü: analog çubuğun kendisi)", SS_CENTERIMAGE, 436, y, 192, 22, 0);
+        } else ctl_make(L"STATIC", L"(kontrolcü: analog çubuğun kendisi)", SS_CENTERIMAGE | SS_NOPREFIX, 442, y, 202, 22, 0);
     }
-    const int by = top + CTL_INPUTS * rows_h + 14;
-    ctl_make(L"BUTTON", L"Varsayılan", BS_PUSHBUTTON, 12, by, 110, 30, ID_CTL_DEFAULTS);
-    ctl_make(L"BUTTON", L"Kaydet", BS_DEFPUSHBUTTON, 400, by, 110, 30, ID_CTL_SAVE);
-    ctl_make(L"BUTTON", L"İptal", BS_PUSHBUTTON, 518, by, 110, 30, ID_CTL_CANCEL);
+    const int by = top + CTL_INPUTS * rows_h + 16;
+    ctl_button(L"Varsayılan", 16, by, 120, 34, ID_CTL_DEFAULTS);
+    ctl_button(L"Kaydet", 410, by, 112, 34, ID_CTL_SAVE);
+    ctl_button(L"İptal", 532, by, 112, 34, ID_CTL_CANCEL);
     ctl_refresh();
     EnableWindow(main_window, FALSE);
     ShowWindow(ctl_window, SW_SHOW);
@@ -1807,72 +1873,173 @@ static DWORD WINAPI play_thread(LPVOID p) {
     PostMessageW(main_window, WM_APP_DONE, code, 0);
     return 0;
 }
+static void invalidate_chrome(void) {
+    const RECT side = {0, 0, sx(SIDEBAR_W), sx(CLIENT_H)}, top = {sx(SIDEBAR_W), 0, sx(CLIENT_W), sx(TITLE_H)};
+    InvalidateRect(main_window, &side, FALSE); InvalidateRect(main_window, &top, FALSE);
+}
+static void invalidate_status(void) {
+    if (current_page != PAGE_HOME) return;
+    const RECT s = {sx(SIDEBAR_W), sx(318), sx(CLIENT_W), sx(358)};
+    InvalidateRect(main_window, &s, FALSE);
+}
+static void show_page(int page) {
+    current_page = page;
+    for (int i = 0; i < page_child_count; ++i) ShowWindow(page_children[i].window, page_children[i].page == page ? SW_SHOWNA : SW_HIDE);
+    RedrawWindow(main_window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
+}
 static void set_running(int on) {
     running = on;
+    if (on) { status_kind = 1; wcscpy(status_text, L"Hazırlanıyor..."); }
     EnableWindow(control(ID_PLAY), !on); EnableWindow(control(ID_STOP), on);
     for (int id = ID_GAME; id <= ID_LOGDIR_BROWSE; ++id) EnableWindow(control(id), !on);
     EnableWindow(control(ID_STEAM), !on);
     online_controls();
     video_controls();
+    RedrawWindow(main_window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
 }
-/* Small screens (a 768p laptop, 125 % and up on 1080p): when the window does not fit the work
- * area of its monitor, gui() clamps it there and the layout scrolls vertically. scroll_page is
- * the visible client height then, 0 when the window fits (and nothing here runs). */
-static int scroll_y, scroll_page, wheel_rest;
-static void scroll_to(HWND window, int y) {
-    if (!scroll_page) return;
-    const int max = sx(CLIENT_H) - scroll_page;
-    if (y > max) y = max;
-    if (y < 0) y = 0;
-    if (y == scroll_y) return;
-    ScrollWindowEx(window, 0, scroll_y - y, NULL, NULL, NULL, NULL, SW_SCROLLCHILDREN | SW_INVALIDATE | SW_ERASE);
-    scroll_y = y;
-    SCROLLINFO info = {.cbSize = sizeof info, .fMask = SIF_POS, .nPos = y};
-    SetScrollInfo(window, SB_VERT, &info, TRUE);
-    /* The panels and the banner are painted at the scroll offset; everything is repainted so no
-     * partly scrolled child or panel edge is left behind. */
-    RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+
+/* ---- the chrome: where the sidebar items and the window buttons are (device pixels) ---- */
+static RECT nav_rect(int i) { return (RECT){sx(12), sx(96 + i * 48), sx(220), sx(96 + i * 48 + 44)}; }
+static RECT side_play_rect(void) { return (RECT){sx(16), sx(CLIENT_H - 148), sx(216), sx(CLIENT_H - 104)}; }
+static RECT minimize_rect(void) { return (RECT){sx(CLIENT_W - 92), 0, sx(CLIENT_W - 46), sx(TITLE_H)}; }
+static RECT close_rect(void) { return (RECT){sx(CLIENT_W - 46), 0, sx(CLIENT_W), sx(TITLE_H)}; }
+static int hit_item(int x, int y) {
+    const POINT p = {x, y};
+    for (int i = 0; i < PAGE_COUNT; ++i) { const RECT r = nav_rect(i); if (PtInRect(&r, p)) return i; }
+    { const RECT r = side_play_rect(); if (PtInRect(&r, p)) return HOVER_PLAY; }
+    { const RECT r = minimize_rect(); if (PtInRect(&r, p)) return HOVER_MINIMIZE; }
+    { const RECT r = close_rect(); if (PtInRect(&r, p)) return HOVER_CLOSE; }
+    return HOVER_NONE;
 }
-/* Tab (or a click) into a control outside the visible part scrolls it into view. */
-static void scroll_to_focus(void) {
-    static HWND last;
-    HWND focus = GetFocus();
-    if (!scroll_page || focus == last) return;
-    last = focus;
-    while (focus && GetParent(focus) && GetParent(focus) != main_window) focus = GetParent(focus); /* the edit inside a combo box */
-    if (!focus || GetParent(focus) != main_window) return;
-    RECT r; GetWindowRect(focus, &r); MapWindowPoints(NULL, main_window, (POINT *)&r, 2);
-    if (r.top < 0) scroll_to(main_window, scroll_y + r.top - sx(8));
-    else if (r.bottom > scroll_page) scroll_to(main_window, scroll_y + r.bottom - scroll_page + sx(8));
+static void paint_sidebar(HDC dc, int height) {
+    const int side_w = sx(SIDEBAR_W);
+    fill(dc, (RECT){0, 0, side_w, height}, C_SIDEBAR);
+    /* The logo. */
+    const RECT mark = {sx(20), sx(22), sx(56), sx(58)};
+    round_rect(dc, mark, C_RED, C_RED, sx(9));
+    draw_text(dc, font_section, HEX(0xFFFFFF), mark, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"UFC");
+    draw_text(dc, font_nav, C_TEXT, (RECT){sx(68), sx(20), side_w - sx(8), sx(40)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, L"UFC 3");
+    draw_text(dc, font_small, C_TEXT_DIM, (RECT){sx(68), sx(40), side_w - sx(8), sx(60)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, L"Yerel PC portu");
+    /* The pages. */
+    for (int i = 0; i < PAGE_COUNT; ++i) {
+        const RECT n = nav_rect(i); const int selected = i == current_page, hover = hover_item == i;
+        if (selected || hover) round_rect(dc, n, selected ? HEX(0x26262E) : HEX(0x1B1B21), selected ? HEX(0x26262E) : HEX(0x1B1B21), sx(8));
+        if (selected) fill(dc, (RECT){n.left, n.top + sx(11), n.left + sx(3), n.bottom - sx(11)}, C_ACCENT);
+        draw_text(dc, font_icon, selected ? C_ACCENT_HOT : hover ? C_TEXT : C_TEXT_DIM, (RECT){n.left + sx(14), n.top, n.left + sx(42), n.bottom},
+                  DT_SINGLELINE | DT_CENTER | DT_VCENTER, page_icons[i]);
+        draw_text(dc, font_nav, selected || hover ? C_TEXT : C_TEXT_DIM, (RECT){n.left + sx(52), n.top, n.right, n.bottom},
+                  DT_SINGLELINE | DT_LEFT | DT_VCENTER, page_names[i]);
+    }
+    /* Play / Stop, always at hand. */
+    const RECT play = side_play_rect(); const int hover_play = hover_item == HOVER_PLAY;
+    if (running) {
+        round_rect(dc, play, hover_play ? HEX(0x3A1A1C) : HEX(0x2A1517), C_RED, sx(10));
+        draw_text(dc, font_action, HEX(0xFF6B66), play, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"DURDUR");
+    } else {
+        const COLORREF face = hover_play ? C_ACCENT_HOT : C_ACCENT;
+        round_rect(dc, play, face, face, sx(10));
+        draw_text(dc, font_action, HEX(0xFFFFFF), play, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"OYNA");
+    }
+    /* The player. */
+    wchar_t name[40]; GetWindowTextW(control(ID_PLAYER), name, COUNT(name));
+    if (!name[0]) wcscpy(name, L"Player 1");
+    const int mode = clampi((int)SendMessageW(control(ID_MODE), CB_GETCURSEL, 0, 0), COUNT(online_mode_names));
+    const RECT avatar = {sx(20), height - sx(92), sx(56), height - sx(56)};
+    disc(dc, avatar, C_ACCENT);
+    wchar_t initial[2] = {(wchar_t)towupper(name[0]), 0};
+    draw_text(dc, font_nav, HEX(0xFFFFFF), avatar, DT_SINGLELINE | DT_CENTER | DT_VCENTER, initial);
+    draw_text(dc, font_nav, C_TEXT, (RECT){sx(68), avatar.top - sx(2), side_w - sx(12), avatar.top + sx(18)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, name);
+    draw_text(dc, font_small, C_TEXT_DIM, (RECT){sx(68), avatar.top + sx(18), side_w - sx(12), avatar.top + sx(38)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, online_mode_names[mode]);
+    wchar_t version[80]; _snwprintf(version, 80, L"Sürüm %hs", version_text); version[79] = 0;
+    draw_text(dc, font_small, C_TEXT_OFF, (RECT){sx(20), height - sx(40), side_w - sx(12), height - sx(16)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, version);
 }
+static void paint_window(HDC dc, RECT client) {
+    fill(dc, client, C_BACKGROUND);
+    SetBkMode(dc, TRANSPARENT);
+    const int side_w = sx(SIDEBAR_W), width = client.right, height = client.bottom;
+    if (current_page == PAGE_HOME) {
+        /* The hero: the banner, the title and the state of the game. */
+        if (hero_bmp) {
+            HDC art = CreateCompatibleDC(dc); HGDIOBJ old = SelectObject(art, hero_bmp);
+            BitBlt(dc, side_w, 0, hero_w, hero_h, art, 0, 0, SRCCOPY);
+            SelectObject(art, old); DeleteDC(art);
+        }
+        const int hx = side_w + sx(40);
+        fill(dc, (RECT){hx, sx(98), hx + sx(36), sx(101)}, C_RED);
+        SetTextCharacterExtra(dc, sx(3));
+        draw_text(dc, font_small, C_TEXT_DIM, (RECT){hx, sx(106), width - sx(40), sx(126)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, L"EA SPORTS");
+        SetTextCharacterExtra(dc, 0);
+        draw_text(dc, font_hero, C_TEXT, (RECT){hx, sx(126), width - sx(40), sx(204)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, L"UFC 3");
+        wchar_t line[160]; _snwprintf(line, 160, L"Yerel PC portu  \x00B7  PS4 CUSA06534  \x00B7  v%hs", version_text); line[159] = 0;
+        draw_text(dc, ui_font, C_TEXT_DIM, (RECT){hx, sx(208), width - sx(40), sx(234)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, line);
+        const RECT dot = {hx, sx(332), hx + sx(10), sx(342)};
+        disc(dc, dot, status_kind == 1 ? C_ACCENT_HOT : status_kind == 2 ? C_RED : C_GREEN);
+        draw_text(dc, font_small, C_TEXT, (RECT){hx + sx(20), sx(326), width - sx(40), sx(348)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, status_text);
+#ifdef UFC3_DIAGNOSTIC_PACKAGE
+        draw_text(dc, font_small, C_RED, (RECT){hx, sx(62), width - sx(120), sx(84)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS,
+                  L"Windows diagnostic test: write windows + audit forced, data in diagnostic-data");
+#endif
+    } else {
+        draw_text(dc, font_title, C_TEXT, (RECT){sx(264), sx(46), width - sx(120), sx(90)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, page_names[current_page]);
+        draw_text(dc, ui_font, C_TEXT_DIM, (RECT){sx(264), sx(92), width - sx(120), sx(118)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, page_subtitles[current_page]);
+    }
+    /* The cards of the page: a rounded panel and its title. */
+    for (int i = 0; i < COUNT(cards); ++i) {
+        if (cards[i].page != current_page) continue;
+        const RECT r = {sx(cards[i].x), sx(cards[i].y), sx(cards[i].x + cards[i].w), sx(cards[i].y + cards[i].h)};
+        round_rect(dc, r, C_CARD, C_BORDER, sx(12));
+        SetTextCharacterExtra(dc, sx(1));
+        draw_text(dc, font_section, C_TEXT_DIM, (RECT){r.left + sx(20), r.top + sx(14), r.right - sx(16), r.top + sx(34)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, cards[i].title);
+        SetTextCharacterExtra(dc, 0);
+    }
+    paint_sidebar(dc, height);
+    /* The window buttons (the window has no title bar of its own). */
+    const RECT minimize = minimize_rect(), close = close_rect();
+    if (hover_item == HOVER_MINIMIZE) fill(dc, minimize, HEX(0x34343C));
+    if (hover_item == HOVER_CLOSE) fill(dc, close, HEX(0xE81123));
+    draw_text(dc, font_caption, C_TEXT, minimize, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"\xE921");
+    draw_text(dc, font_caption, C_TEXT, close, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"\xE8BB");
+    /* A thin frame. */
+    SetDCBrushColor(dc, C_BORDER); FrameRect(dc, &client, GetStockObject(DC_BRUSH));
+}
+
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     switch (message) {
-    case WM_VSCROLL: {
-        SCROLLINFO info = {.cbSize = sizeof info, .fMask = SIF_TRACKPOS};
-        GetScrollInfo(window, SB_VERT, &info);
-        switch (LOWORD(wparam)) {
-        case SB_LINEUP: scroll_to(window, scroll_y - sx(30)); break;
-        case SB_LINEDOWN: scroll_to(window, scroll_y + sx(30)); break;
-        case SB_PAGEUP: scroll_to(window, scroll_y - scroll_page); break;
-        case SB_PAGEDOWN: scroll_to(window, scroll_y + scroll_page); break;
-        case SB_TOP: scroll_to(window, 0); break;
-        case SB_BOTTOM: scroll_to(window, sx(CLIENT_H)); break;
-        case SB_THUMBTRACK: case SB_THUMBPOSITION: scroll_to(window, info.nTrackPos); break;
+    case WM_NCHITTEST: {
+        /* The top strip and the logo drag the window; the window buttons and the rest are the client's. */
+        POINT p = {(short)LOWORD(lparam), (short)HIWORD(lparam)};
+        ScreenToClient(window, &p);
+        if (hit_item(p.x, p.y) != HOVER_NONE) return HTCLIENT;
+        if (p.y >= 0 && (p.y < sx(TITLE_H) || (p.x < sx(SIDEBAR_W) && p.y < sx(80)))) return HTCAPTION;
+        return HTCLIENT;
+    }
+    case WM_MOUSEMOVE: {
+        const int item = hit_item((short)LOWORD(lparam), (short)HIWORD(lparam));
+        if (item != hover_item) {
+            hover_item = item;
+            TRACKMOUSEEVENT track = {.cbSize = sizeof(track), .dwFlags = TME_LEAVE, .hwndTrack = window};
+            TrackMouseEvent(&track);
+            invalidate_chrome();
         }
         return 0;
     }
-    case WM_MOUSEWHEEL: {
-        if (!scroll_page) break;
-        /* 90 px a notch; a touchpad's smaller deltas add up. */
-        wheel_rest += GET_WHEEL_DELTA_WPARAM(wparam) * sx(90);
-        const int pixels = wheel_rest / WHEEL_DELTA;
-        wheel_rest -= pixels * WHEEL_DELTA;
-        scroll_to(window, scroll_y - pixels);
+    case WM_MOUSELEAVE:
+        if (hover_item != HOVER_NONE) { hover_item = HOVER_NONE; invalidate_chrome(); }
+        return 0;
+    case WM_SETCURSOR:
+        if ((HWND)wparam == window && LOWORD(lparam) == HTCLIENT && hover_item != HOVER_NONE) { SetCursor(LoadCursorW(NULL, IDC_HAND)); return TRUE; }
+        break;
+    case WM_LBUTTONDOWN: {
+        const int item = hit_item((short)LOWORD(lparam), (short)HIWORD(lparam));
+        if (item >= 0 && item < PAGE_COUNT) { if (item != current_page) show_page(item); }
+        else if (item == HOVER_PLAY) SendMessageW(window, WM_COMMAND, MAKEWPARAM(running ? ID_STOP : ID_PLAY, BN_CLICKED), 0);
+        else if (item == HOVER_MINIMIZE) ShowWindow(window, SW_MINIMIZE);
+        else if (item == HOVER_CLOSE) PostMessageW(window, WM_CLOSE, 0, 0);
         return 0;
     }
     case WM_COMMAND: {
         const int id = LOWORD(wparam), code = HIWORD(wparam);
-        /* Owner-drawn check boxes toggle themselves (a quick second click arrives as a double click). */
+        /* Owner-drawn switches toggle themselves (a quick second click arrives as a double click). */
         if (id >= 100 && id < ID_LAST && is_check[id - 100]) {
             if (code == BN_CLICKED || code == BN_DOUBLECLICKED) { set_checked(id, !checked(id)); if (id == ID_NEO) neo_user = checked(id); }
             return 0;
@@ -1881,14 +2048,15 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         if (id == ID_RESOLUTION && code == CBN_SELCHANGE) video_controls();
         else if (id == ID_GAME && code == EN_KILLFOCUS) {
             wchar_t folder[PATHW]; GetWindowTextW(control(ID_GAME), folder, PATHW); trimw(folder);
-            banner_load(folder); RECT banner = {0, 0, sx(CLIENT_W), sx(BANNER_H)}; InvalidateRect(window, &banner, FALSE);
+            hero_build(folder); RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
         }
-        else if (id == ID_MODE && code == CBN_SELCHANGE) online_controls();
+        else if (id == ID_PLAYER && code == EN_CHANGE) invalidate_chrome();
+        else if (id == ID_MODE && code == CBN_SELCHANGE) { online_controls(); invalidate_chrome(); }
         else if (id == ID_HOSTSCAN && !running) fill_host_addresses();
         else if (id == ID_COPYHOST) copy_host_address();
         else if (id == ID_BROWSE) { wchar_t folder[PATHW]; if (pick_folder(L"Oyun klasörü (CUSA06534; yanındaki CUSA06534-patch otomatik birleştirilir)", folder)) {
             SetWindowTextW(control(ID_GAME), folder);
-            banner_load(folder); RECT banner = {0, 0, sx(CLIENT_W), sx(BANNER_H)}; InvalidateRect(window, &banner, FALSE);
+            hero_build(folder); RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
         } }
         else if (id == ID_LOGDIR_BROWSE && !running) {
             wchar_t folder[PATHW];
@@ -1924,8 +2092,20 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
     }
     case WM_APP_LOG: {
         wchar_t *text = (wchar_t *)lparam;
-        /* Edit controls want \r\n. */
+        /* The last line of the chunk is the state shown under the title while the game runs. */
         size_t n = wcslen(text), extra = 0;
+        if (running) {
+            const wchar_t *end = text + n;
+            while (end > text && (end[-1] == L'\n' || end[-1] == L'\r' || end[-1] == L' ')) --end;
+            const wchar_t *start = end;
+            while (start > text && start[-1] != L'\n') --start;
+            if (end > start) {
+                size_t k = (size_t)(end - start); if (k > (size_t)(COUNT(status_text) - 1)) k = (size_t)(COUNT(status_text) - 1);
+                wmemcpy(status_text, start, k); status_text[k] = 0;
+                invalidate_status();
+            }
+        }
+        /* Edit controls want \r\n. */
         for (size_t i = 0; i < n; ++i) if (text[i] == L'\n' && (i == 0 || text[i - 1] != L'\r')) ++extra;
         wchar_t *crlf = malloc((n + extra + 1) * sizeof(wchar_t));
         if (crlf) {
@@ -1946,17 +2126,14 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         RECT client; GetClientRect(window, &client);
         HDC dc = CreateCompatibleDC(screen); HBITMAP buffer = CreateCompatibleBitmap(screen, client.right, client.bottom);
         HGDIOBJ old = SelectObject(dc, buffer);
-        /* The layout is drawn scroll_y higher (0 when the window fits: the plain client area). */
-        SetViewportOrgEx(dc, 0, -scroll_y, NULL);
-        paint_window(dc, (RECT){0, 0, client.right, client.bottom + scroll_y});
-        SetViewportOrgEx(dc, 0, 0, NULL);
+        paint_window(dc, client);
         BitBlt(screen, 0, 0, client.right, client.bottom, dc, 0, 0, SRCCOPY);
         SelectObject(dc, old); DeleteObject(buffer); DeleteDC(dc);
         EndPaint(window, &ps);
         return 0;
     }
     case WM_DRAWITEM: draw_button((const DRAWITEMSTRUCT *)lparam); return TRUE;
-    case WM_CTLCOLORBTN: return (LRESULT)brush_panel;
+    case WM_CTLCOLORBTN: return (LRESULT)brush_card;
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = (HDC)wparam; HWND child = (HWND)lparam;
         if (child == log_edit) { SetTextColor(dc, HEX(0xD4D4DA)); SetBkColor(dc, C_LOG); return (LRESULT)brush_log; }
@@ -1965,11 +2142,17 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         if (message != WM_CTLCOLORSTATIC || !_wcsicmp(cls, L"Edit") || !_wcsicmp(cls, L"ComboBox")) {
             SetTextColor(dc, IsWindowEnabled(child) ? C_TEXT : C_TEXT_DIM); SetBkColor(dc, C_INPUT); return (LRESULT)brush_input;
         }
-        int is_note = 0;
-        for (int i = 0; i < note_count; ++i) is_note |= notes[i] == child;
-        SetTextColor(dc, is_note ? C_TEXT_DIM : C_TEXT); SetBkColor(dc, C_PANEL); return (LRESULT)brush_panel;
+        int is_dim = 0;
+        for (int i = 0; i < dim_count; ++i) is_dim |= dim_text[i] == child;
+        SetTextColor(dc, is_dim ? C_TEXT_DIM : C_TEXT); SetBkColor(dc, C_CARD); return (LRESULT)brush_card;
     }
     case WM_APP_DONE:
+        if (wparam == 0 || wparam == 130) { wcscpy(status_text, wparam == 0 ? L"Oyun kapandı" : L"Durduruldu"); status_kind = 0; }
+        else {
+            if (wparam >= 0x80000000u) _snwprintf(status_text, COUNT(status_text), L"Oyun 0x%08lX koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", (unsigned long)wparam);
+            else _snwprintf(status_text, COUNT(status_text), L"Oyun %lu koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", (unsigned long)wparam);
+            status_text[COUNT(status_text) - 1] = 0; status_kind = 2;
+        }
         set_running(0);
         open_log_file(L"launcher.log");
         return 0;
@@ -1990,23 +2173,34 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
 }
 static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count) {
     play_extra = extra; play_extra_count = extra_count;
-    INITCOMMONCONTROLSEX icc = {sizeof(icc), ICC_STANDARD_CLASSES};
+    INITCOMMONCONTROLSEX icc = {.dwSize = sizeof(icc), .dwICC = ICC_STANDARD_CLASSES};
     InitCommonControlsEx(&icc);
     { const UINT dpi = GetDpiForSystem(); scale = (dpi >= 96 && dpi <= 480) ? dpi / 96.0f : 1.0f; }
-    ui_font = make_font(13, FW_NORMAL, L"Segoe UI");
+    /* Small screens (a 768p laptop, 125 % and up): the whole layout shrinks to fit the work area. */
+    RECT work = {0, 0, 1280, 720};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    {
+        const float fit_w = (float)(work.right - work.left) * 0.98f / CLIENT_W, fit_h = (float)(work.bottom - work.top) * 0.98f / CLIENT_H;
+        const float fit = fit_w < fit_h ? fit_w : fit_h;
+        if (fit > 0.5f && scale > fit) scale = fit;
+    }
+    read_version(version_text, sizeof(version_text));
+    ui_font = make_font(13, FW_NORMAL, 0, L"Segoe UI");
     if (!ui_font) ui_font = GetStockObject(DEFAULT_GUI_FONT);
-    font_section = make_font(13, FW_BOLD, L"Segoe UI"); font_title = make_font(28, FW_BOLD, L"Segoe UI");
-    font_small = make_font(12, FW_NORMAL, L"Segoe UI"); font_action = make_font(16, FW_BOLD, L"Segoe UI");
-    font_log = make_font(12, FW_NORMAL, L"Consolas");
-    brush_background = CreateSolidBrush(C_BACKGROUND); brush_panel = CreateSolidBrush(C_PANEL);
+    font_section = make_font(11, FW_BOLD, 0, L"Segoe UI"); font_title = make_font(30, FW_SEMIBOLD, 0, L"Segoe UI");
+    font_small = make_font(12, FW_NORMAL, 0, L"Segoe UI"); font_action = make_font(16, FW_BOLD, 0, L"Segoe UI");
+    font_hero = make_font(68, FW_BOLD, 1, L"Segoe UI"); font_nav = make_font(14, FW_SEMIBOLD, 0, L"Segoe UI");
+    font_icon = make_font(16, FW_NORMAL, 0, L"Segoe MDL2 Assets"); font_caption = make_font(10, FW_NORMAL, 0, L"Segoe MDL2 Assets");
+    font_log = make_font(12, FW_NORMAL, 0, L"Consolas");
+    brush_background = CreateSolidBrush(C_BACKGROUND); brush_card = CreateSolidBrush(C_CARD);
     brush_input = CreateSolidBrush(C_INPUT); brush_log = CreateSolidBrush(C_LOG);
-    WNDCLASSW wc = {.lpfnWndProc = window_proc, .hInstance = instance, .hCursor = LoadCursorW(NULL, IDC_ARROW),
+    WNDCLASSW wc = {.style = CS_DROPSHADOW, .lpfnWndProc = window_proc, .hInstance = instance, .hCursor = LoadCursorW(NULL, IDC_ARROW),
                     .hbrBackground = brush_background, .lpszClassName = L"UFC3NativeLauncher", .hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1))};
     RegisterClassW(&wc);
-    const DWORD style = (WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX) | WS_CLIPCHILDREN;
-    /* The client area is CLIENT_W x CLIENT_H at 96 DPI: the window is created, measured, and
-     * resized by the difference (the frame metrics of the running system, whatever they are). */
+    /* Borderless: the window draws its own title strip, sidebar and buttons. */
+    const DWORD style = WS_POPUP | WS_MINIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
     const int client_w = sx(CLIENT_W), client_h = sx(CLIENT_H);
+    const int left = work.left + ((work.right - work.left) - client_w) / 2, top = work.top + ((work.bottom - work.top) - client_h) / 2;
 #if defined(UFC3_WRITE_WINDOWS_TEST)
     const wchar_t *window_title = L"EA SPORTS UFC 3 - native PC port (UFC-48 write windows test)";
 #elif defined(UFC3_DIAGNOSTIC_PACKAGE)
@@ -2014,110 +2208,76 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
 #else
     const wchar_t *window_title = L"EA SPORTS UFC 3 - yerel PC portu";
 #endif
-    main_window = CreateWindowExW(0, wc.lpszClassName, window_title, style, CW_USEDEFAULT, CW_USEDEFAULT, client_w + 16, client_h + 64,
-                                  NULL, NULL, instance, NULL);
+    main_window = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, window_title, style, left < work.left ? work.left : left, top < work.top ? work.top : top,
+                                  client_w, client_h, NULL, NULL, instance, NULL);
     if (!main_window) return 1;
-    theme_load(main_window);
-    banner_load(settings.game);
+    theme_load(main_window, 1);
+    hero_build(settings.game);
     open_log_file(L"launcher.log");
+    logw(L"Pencere: %dx%d, DPI %u, ölçek %d%%\n", client_w, client_h, GetDpiForWindow(main_window), (int)(scale * 100));
+
+    /* KÜTÜPHANE: the hero's buttons, the game card and the controller card. */
+    build_page = PAGE_HOME;
+    button(L"OYNA", 272, 262, 200, 52, ID_PLAY);
+    button(L"DURDUR", 484, 262, 130, 52, ID_STOP);
+    label(L"Oyun klasörü", 284, 464, 300);
+    edit(settings.game, 284, 484, 330, ID_GAME);
+    button(L"Gözat...", 626, 484, 138, 28, ID_BROWSE);
+    label(L"Oyuncu adı", 284, 530, 240);
+    edit(settings.player[0] ? settings.player : L"Player 1", 284, 550, 240, ID_PLAYER);
+    SendMessageW(control(ID_PLAYER), EM_SETLIMITTEXT, 16, 0);
+    label(L"Oyun dili", 540, 530, 224); combo(540, 550, 224, ID_LANGUAGE, 0);
+    note(L"Oyun klasörü: CUSA06534 (yanındaki CUSA06534-patch otomatik birleştirilir).", 284, 600, 480, 36);
+    label(L"Kontrolcü", 820, 464, 248); combo(820, 484, 248, ID_GAMEPAD, 0);
+    button(L"Yeniden tara", 820, 526, 118, 30, ID_RESCAN);
+    button(L"Kontroller...", 950, 526, 118, 30, ID_CONTROLS);
+    note(L"Oyun içi menü: L3+R3 veya Insert", 820, 576, 248, 36);
+    /* GÖRÜNTÜ */
+    build_page = PAGE_VIDEO;
     {
-        RECT window_rect, client_rect;
-        GetWindowRect(main_window, &window_rect); GetClientRect(main_window, &client_rect);
-        const int dw = (window_rect.right - window_rect.left) - client_rect.right, dh = (window_rect.bottom - window_rect.top) - client_rect.bottom;
-        if (dw >= 0 && dw < 200 && dh >= 0 && dh < 200) SetWindowPos(main_window, NULL, 0, 0, client_w + dw, client_h + dh, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-        GetWindowRect(main_window, &window_rect); GetClientRect(main_window, &client_rect);
-        logw(L"Window: %ld,%ld %ldx%ld, client %ldx%ld, frame +%d+%d, DPI %u, caption %d\n", window_rect.left, window_rect.top,
-             window_rect.right - window_rect.left, window_rect.bottom - window_rect.top, client_rect.right, client_rect.bottom, dw, dh,
-             GetDpiForWindow(main_window), GetSystemMetrics(SM_CYCAPTION));
-        /* Kept inside the work area of its monitor. Taller than it (884 px at 96 DPI is more than a
-         * 768p screen, 1105 px at 125 %): clamped to its height, with a vertical scroll bar and the
-         * window widened by the bar, so the layout itself stays the same. */
-        MONITORINFO monitor = {.cbSize = sizeof monitor};
-        if (GetMonitorInfoW(MonitorFromWindow(main_window, MONITOR_DEFAULTTONEAREST), &monitor)) {
-            const RECT work = monitor.rcWork;
-            const int work_w = work.right - work.left, work_h = work.bottom - work.top;
-            int w = window_rect.right - window_rect.left, h = window_rect.bottom - window_rect.top, flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOSIZE;
-            if (h > work_h) {
-                const int frame_h = h - client_rect.bottom;
-                SetWindowLongPtrW(main_window, GWL_STYLE, GetWindowLongPtrW(main_window, GWL_STYLE) | WS_VSCROLL);
-                SCROLLINFO info = {.cbSize = sizeof info, .fMask = SIF_RANGE | SIF_PAGE | SIF_POS, .nMin = 0, .nMax = client_h - 1,
-                                   .nPage = (UINT)(work_h - frame_h), .nPos = 0};
-                SetScrollInfo(main_window, SB_VERT, &info, FALSE);
-                SetWindowPos(main_window, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-                GetWindowRect(main_window, &window_rect); GetClientRect(main_window, &client_rect);
-                const int frame_w = (window_rect.right - window_rect.left) - client_rect.right;
-                w = client_w + (frame_w >= 0 && frame_w < 300 ? frame_w : dw + GetSystemMetrics(SM_CXVSCROLL));
-                h = work_h; flags &= ~SWP_NOSIZE;
-            }
-            const int x = window_rect.left + w > work.right ? work.right - w : window_rect.left;
-            const int y = window_rect.top + h > work.bottom ? work.bottom - h : window_rect.top;
-            SetWindowPos(main_window, NULL, x < work.left || w > work_w ? work.left : x, y < work.top ? work.top : y, w, h, flags);
-            if (!(flags & SWP_NOSIZE)) {
-                GetClientRect(main_window, &client_rect);
-                scroll_page = client_rect.bottom;
-                SCROLLINFO info = {.cbSize = sizeof info, .fMask = SIF_PAGE, .nPage = (UINT)scroll_page};
-                SetScrollInfo(main_window, SB_VERT, &info, TRUE);
-                logw(L"Window: taller than the work area (%dx%d): %dx%d, client %ldx%d of %d, scrolls\n", work_w, work_h, w, h,
-                     client_rect.right, scroll_page, client_h);
-            }
+        const struct { const wchar_t *text; int id, x, y; } rows[] = {
+            {L"Oyun çözünürlüğü", ID_RESOLUTION, 284, 188}, {L"Ekran çözünürlüğü", ID_DISPLAY, 284, 248},
+            {L"Ölçekleme", ID_UPSCALER, 284, 308}, {L"Keskinlik (RCAS)", ID_SHARPNESS, 284, 368},
+            {L"FPS sınırı", ID_FPS, 708, 188}, {L"Sunum modu", ID_PRESENT, 708, 248}};
+        for (int i = 0; i < COUNT(rows); ++i) {
+            label(rows[i].text, rows[i].x, rows[i].y, 360); combo(rows[i].x, rows[i].y + 20, 360, rows[i].id, 0);
+            SendMessageW(control(rows[i].id), CB_SETDROPPEDWIDTH, (WPARAM)sx(rows[i].id == ID_PRESENT ? 440 : 380), 0);
         }
     }
-    /* GAME (left column; content x 28..430) */
-    int y = 134 + 34;
-    label(L"Oyun klasörü (CUSA06534, yanında CUSA06534-patch ile)", 28, y, 402); y += 26;
-    edit(settings.game, 28, y, 306, ID_GAME);
-    button(L"Gözat...", 342, y, 88, 24, ID_BROWSE); y += 32;
-    label(L"Oyuncu adı", 28, y, 118);
-    edit(settings.player[0] ? settings.player : L"Player 1", 150, y, 280, ID_PLAYER);
-    SendMessageW(control(ID_PLAYER), EM_SETLIMITTEXT, 16, 0); y += 30;
-    label(L"Dil", 28, y, 118); combo(150, y, 280, ID_LANGUAGE, 0); y += 30;
-    label(L"Kontrolcü", 28, y, 118); combo(150, y, 280, ID_GAMEPAD, 0); y += 30;
-    note(L"Oyun içi menü: L3+R3 veya Insert", 28, y + 4, 190, 18);
-    button(L"Yeniden tara", 226, y, 90, 24, ID_RESCAN);
-    button(L"Kontroller...", 322, y, 108, 24, ID_CONTROLS);
-    /* ONLINE */
-    y = 360 + 34;
-    label(L"Çevrimiçi oyun", 28, y, 118); combo(150, y, 280, ID_MODE, 0); y += 30;
-    label(L"Katılma adresi", 28, y, 118); edit(settings.join_address, 150, y, 280, ID_ONLINE); y += 30;
-    label(L"Sunucu adresi", 28, y, 118); combo(150, y, 280, ID_HOST, 1); y += 30;
-    button(L"Yeniden tara", 150, y, 90, 24, ID_HOSTSCAN);
-    button(L"IP kopyala", 246, y, 100, 24, ID_COPYHOST); y += 32;
-    note(L"Sunucu kuran: bu PC'nin adresini arkadaşınla paylaş (IP kopyala). Ev ağın dışında iki PC de VPN "
-         L"kullanmalı: bu PC'nin VPN IP'sini seç. Sunucu Oyna ile başlar, oyunla birlikte kapanır.", 28, y, 402, 58);
-    /* VIDEO (right column; content x 470..872) */
-    y = 134 + 34;
-    const struct { const wchar_t *text; int id; } video_rows[] = {
-        {L"Oyun çözünürlüğü", ID_RESOLUTION}, {L"Ekran çözünürlüğü", ID_DISPLAY}, {L"Sunum modu", ID_PRESENT},
-        {L"Ölçekleme", ID_UPSCALER}, {L"Keskinlik (RCAS)", ID_SHARPNESS}, {L"FPS sınırı", ID_FPS}};
-    for (int i = 0; i < COUNT(video_rows); ++i, y += 30) {
-        label(video_rows[i].text, 470, y, 130); combo(604, y, 268, video_rows[i].id, 0);
-        SendMessageW(control(video_rows[i].id), CB_SETDROPPEDWIDTH, (WPARAM)sx(330), 0);
-    }
-    y += 4;
-    checkbox(L"Tam ekran", 470, y, 190, ID_FULLSCREEN); checkbox(L"PS4 Pro modu (daha net)", 672, y, 200, ID_NEO); y += 26;
-    checkbox(L"FPS sayacını göster", 470, y, 190, ID_SHOWFPS); checkbox(L"Giriş videolarını atla", 672, y, 200, ID_SKIPMOVIES); y += 30;
+    checkbox(L"Tam ekran", 708, 316, 360, ID_FULLSCREEN);
+    checkbox(L"PS4 Pro modu (daha net)", 708, 344, 360, ID_NEO);
+    checkbox(L"FPS sayacını göster", 708, 372, 360, ID_SHOWFPS);
+    checkbox(L"Giriş videolarını atla", 708, 400, 360, ID_SKIPMOVIES);
     note(L"2K / 4K (deneysel): 4K çıkışlı PS4 Pro; oyunda VIDEO \x2192 Favor Resolution seç. Büyük ekranda 720p/1080p: "
-         L"Ekran çözünürlüğü + FSR 1.0. DLSS: motor modülü gelene dek FSR 1.0 çalışır.", 470, y, 402, 54);
-    /* ADVANCED */
-    y = 476 + 40;
-    checkbox(L"Başlangıçta shader önbelleğini temizle", 470, y, 220, ID_CLEAR); checkbox(L"Kare istatistikleri", 700, y, 172, ID_STATS); y += 28;
-    checkbox(L"Vulkan doğrulama katmanı", 470, y, 220, ID_VALIDATION); checkbox(L"Menü girdi izleme", 700, y, 172, ID_TRACE);
-    /* LOGS (full width) */
-    y = 592 + 34;
-    label(L"Kayıt klasörü", 28, y, 90);
-    edit(settings.log_dir, 122, y, 440, ID_LOGDIR);
-    button(L"Gözat...", 570, y, 88, 24, ID_LOGDIR_BROWSE);
-    button(L"Kayıtları aç", 666, y, 100, 24, ID_LOGS);
-    button(L"Verileri aç", 772, y, 100, 24, ID_DATA); y += 28;
-    note(L"Boş: veri klasöründeki kayıtlar. BB_LOG_DIR bunun önüne geçer; paylaşımlı veya ağ sürücüsü de olur.", 122, y, 750, 18);
-    /* Play / Stop / Steam, then the log of the run. */
-    y = 692;
-    button(L"OYNA", 16, y, 170, 40, ID_PLAY);
-    button(L"DURDUR", 196, y, 110, 40, ID_STOP);
-    button(L"Steam'e ekle", 744, y, 140, 40, ID_STEAM); y += 52;
-    log_edit = make(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, 16, y, 868, CLIENT_H - y - 16, ID_LOG);
+         L"Ekran çözünürlüğü + FSR 1.0. DLSS: motor modülü gelene dek FSR 1.0 çalışır.", 284, 496, 784, 54);
+    /* ÇEVRİMİÇİ */
+    build_page = PAGE_ONLINE;
+    label(L"Çevrimiçi oyun", 284, 188, 480); combo(284, 208, 480, ID_MODE, 0);
+    label(L"Katılma adresi", 284, 248, 480); edit(settings.join_address, 284, 268, 480, ID_ONLINE);
+    label(L"Sunucu adresi", 284, 308, 480); combo(284, 328, 480, ID_HOST, 1);
+    button(L"Yeniden tara", 284, 372, 130, 30, ID_HOSTSCAN);
+    button(L"IP kopyala", 426, 372, 130, 30, ID_COPYHOST);
+    note(L"Sunucu kuran: bu PC'nin adresini arkadaşınla paylaş (IP kopyala). Ev ağın dışında iki PC de VPN "
+         L"kullanmalı: bu PC'nin VPN IP'sini seç. Sunucu Oyna ile başlar, oyunla birlikte kapanır.", 820, 188, 248, 230);
+    /* GELİŞMİŞ */
+    build_page = PAGE_ADVANCED;
+    checkbox(L"Başlangıçta shader önbelleğini temizle", 284, 188, 360, ID_CLEAR);
+    checkbox(L"Kare istatistikleri", 284, 224, 360, ID_STATS);
+    checkbox(L"Vulkan doğrulama katmanı", 284, 260, 360, ID_VALIDATION);
+    checkbox(L"Menü girdi izleme", 284, 296, 360, ID_TRACE);
+    note(L"Shader önbelleğini temizlemek her açılışta shader'ları yeniden derler: kapalı bırak.", 284, 340, 360, 40);
+    button(L"Steam'e ekle", 708, 188, 360, 40, ID_STEAM);
+    note(L"Steam kısayolu oyunu kayıtlı ayarlarla doğrudan başlatır. Steam kapalıyken ekle.", 708, 240, 360, 40);
+    /* KAYITLAR */
+    build_page = PAGE_LOGS;
+    edit(settings.log_dir, 284, 184, 476, ID_LOGDIR);
+    button(L"Gözat...", 772, 184, 88, 28, ID_LOGDIR_BROWSE);
+    button(L"Kayıtları aç", 872, 184, 100, 28, ID_LOGS);
+    button(L"Verileri aç", 984, 184, 84, 28, ID_DATA);
+    note(L"Boş: veri klasöründeki kayıtlar. BB_LOG_DIR bunun önüne geçer; paylaşımlı veya ağ sürücüsü de olur.", 284, 226, 784, 18);
+    log_edit = make(L"EDIT", L"", WS_BORDER | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY, 264, 282, 824, CLIENT_H - 282 - 32, ID_LOG);
     SendMessageW(log_edit, WM_SETFONT, (WPARAM)font_log, TRUE);
-    SendMessageW(log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(sx(6), sx(6)));
+    SendMessageW(log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(sx(8), sx(8)));
     dark_theme(log_edit, L"DarkMode_Explorer");
     SendMessageW(log_edit, EM_SETLIMITTEXT, 0, 0);
     {
@@ -2141,19 +2301,18 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
     set_checked(ID_STATS, settings.frame_stats); set_checked(ID_VALIDATION, settings.validation); set_checked(ID_TRACE, settings.menu_trace);
     gamepads_refresh(); fill_gamepads(); fill_host_addresses();
     set_running(0);
-    char version[64]; read_version(version, sizeof(version));
-    logf("SacredFire %s (Windows). Data: ", version); logw(L"%ls\n", data);
+    show_page(PAGE_HOME);
+    logf("SacredFire %s (Windows). Data: ", version_text); logw(L"%ls\n", data);
 #ifdef UFC3_DIAGNOSTIC_PACKAGE
     logw(L"Windows diagnostic test: the data stays beside the exe in diagnostic-data; write windows and their audit are on for every run.\n");
 #endif
-    logw(L"Kontrolcü: %d bulundu; pencere ölçeği %d%%\n", gamepad_count, (int)(scale * 100));
+    logw(L"Kontrolcü: %d bulundu\n", gamepad_count);
     ShowWindow(main_window, SW_SHOW);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         if (ctl_capture_key(&msg)) continue;
         if (ctl_window && IsDialogMessageW(ctl_window, &msg)) continue;
         if (!IsDialogMessageW(main_window, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
-        scroll_to_focus();
     }
     return 0;
 }
