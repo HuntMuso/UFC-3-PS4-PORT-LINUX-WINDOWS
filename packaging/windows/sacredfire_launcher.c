@@ -20,6 +20,8 @@
  * when started from one.
  * Command line: `--play` starts the game at once with the saved settings and no window (Steam
  * shortcuts); `--game <folder>` sets the folder; other arguments go to the game.
+ * Interface language: English by default on the first start; the Dil / Language page switches to Turkish (ui_language= in the ini,
+ * remembered at every start). Theme: yellow on black.
  * Look (UFC-49): an Epic Games Launcher style shell, all Turkish, still one native Win32 program (no
  * browser, no console, no script): a borderless window with a sidebar (Kütüphane, Görüntü, Çevrimiçi,
  * Kontrolcü, Gelişmiş, Kayıtlar), a hero banner with the big Play button, rounded cards, switches and a
@@ -74,6 +76,7 @@ typedef struct {
     int display;
     int skip_movies; /* the EA intro and the first-start video replaced by a short black clip */
     int language;    /* index into languages[] */
+    int ui_lang;     /* launcher interface language: 0 = English (the default on first start), 1 = Turkish; saved as ui_language= */
     /* The folder the run logs (and the frame/readback CSVs) go to; empty: <data>\logs.
      * BB_LOG_DIR wins over it. */
     wchar_t log_dir[PATHW];
@@ -121,6 +124,199 @@ static const wchar_t *const language_names[] = {
     L"İngilizce (ABD)", L"Fransızca", L"Almanca", L"İtalyanca", L"İspanyolca (İspanya)", L"İspanyolca (Latin Amerika)",
     L"Portekizce (Brezilya)", L"Portekizce (Portekiz)", L"Lehçe", L"Rusça", L"Japonca", L"Çince (Geleneksel)"};
 static const wchar_t *const language_ids[] = {L"1", L"2", L"4", L"5", L"3", L"20", L"17", L"7", L"16", L"8", L"0", L"10"};
+/* ---- interface language (English default, Turkish saved) ----
+ * The source strings are Turkish. ui_t() returns the text in the chosen language; it also accepts the English text, so a
+ * control that already shows English can be switched back. Not in the table: returned unchanged. */
+static const struct { const wchar_t *tr, *en; } i18n[] = {
+    {L"Kütüphane", L"Library"},
+    {L"Görüntü", L"Display"},
+    {L"Çevrimiçi", L"Online"},
+    {L"Kontrolcü", L"Controller"},
+    {L"Gelişmiş", L"Advanced"},
+    {L"Kayıtlar", L"Logs"},
+    {L"Dil", L"Language"},
+    {L"Yerel PC portu", L"Local PC port"},
+    {L"Sürüm %hs", L"Version %hs"},
+    {L"OYNA", L"PLAY"},
+    {L"DURDUR", L"STOP"},
+    {L"Hazır", L"Ready"},
+    {L"Hazırlanıyor...", L"Preparing..."},
+    {L"Oyun kapandı", L"Game closed"},
+    {L"Durduruldu", L"Stopped"},
+    {L"Oyun 0x%08lX koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", L"Game exited with code 0x%08lX. See the Logs page for details."},
+    {L"Oyun %lu koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", L"Game exited with code %lu. See the Logs page for details."},
+    {L"Yerel PC portu  \x00B7  PS4 CUSA06534  \x00B7  v%hs", L"Local PC port  \x00B7  PS4 CUSA06534  \x00B7  v%hs"},
+    {L"EA SPORTS UFC 3 - yerel PC portu", L"EA SPORTS UFC 3 - local PC port"},
+    {L"OYUN", L"GAME"},
+    {L"KONTROLCÜ", L"CONTROLLER"},
+    {L"ÇÖZÜNÜRLÜK VE ÖLÇEKLEME", L"RESOLUTION AND SCALING"},
+    {L"PERFORMANS VE SUNUM", L"PERFORMANCE AND PRESENTATION"},
+    {L"NOT", L"NOTE"},
+    {L"BAĞLANTI", L"CONNECTION"},
+    {L"NASIL ÇALIŞIR?", L"HOW IT WORKS"},
+    {L"KONTROLCÜ TESTİ", L"CONTROLLER TEST"},
+    {L"BİLGİ", L"INFO"},
+    {L"GELİŞTİRİCİ SEÇENEKLERİ", L"DEVELOPER OPTIONS"},
+    {L"ARAÇLAR", L"TOOLS"},
+    {L"KAYIT KLASÖRÜ", L"LOG FOLDER"},
+    {L"ARAYÜZ DİLİ", L"INTERFACE LANGUAGE"},
+    {L"Çözünürlük, ölçekleme ve kare hızı.", L"Resolution, scaling and frame rate."},
+    {L"Arkadaşlarınla özel sunucu üzerinden oyna.", L"Play with friends on a private server."},
+    {L"Kontrolcünün düğmelerini ve çubuklarını canlı dene.", L"Test your controller's buttons and sticks live."},
+    {L"Geliştirici seçenekleri ve araçlar.", L"Developer options and tools."},
+    {L"Oturum kayıtları ve veri klasörü.", L"Session logs and the data folder."},
+    {L"Launcher'ın arayüz dilini seç.", L"Choose the launcher's interface language."},
+    {L"Oyun klasörü", L"Game folder"},
+    {L"Gözat...", L"Browse..."},
+    {L"Oyuncu adı", L"Player name"},
+    {L"Oyun dili", L"Game language"},
+    {L"Oyun klasörü: CUSA06534 (yanındaki CUSA06534-patch otomatik birleştirilir).", L"Game folder: CUSA06534 (the CUSA06534-patch next to it is merged automatically)."},
+    {L"Yeniden tara", L"Rescan"},
+    {L"Kontroller...", L"Controls..."},
+    {L"Oyun içi menü: L3+R3 veya Insert", L"In-game menu: L3+R3 or Insert"},
+    {L"Herhangi bir kontrolcü (veya klavye)", L"Any controller (or keyboard)"},
+    {L"Oyun çözünürlüğü", L"Game resolution"},
+    {L"Ekran çözünürlüğü", L"Display resolution"},
+    {L"Ölçekleme", L"Scaling"},
+    {L"Keskinlik (RCAS)", L"Sharpness (RCAS)"},
+    {L"FPS sınırı", L"FPS limit"},
+    {L"Sunum modu", L"Present mode"},
+    {L"Tam ekran", L"Fullscreen"},
+    {L"PS4 Pro modu (daha net)", L"PS4 Pro mode (sharper)"},
+    {L"FPS sayacını göster", L"Show FPS counter"},
+    {L"Giriş videolarını atla", L"Skip intro videos"},
+    {L"2K / 4K (deneysel): 4K çıkışlı PS4 Pro; oyunda VIDEO \x2192 Favor Resolution seç. Büyük ekranda 720p/1080p: Ekran çözünürlüğü + FSR 1.0. DLSS: motor modülü gelene dek FSR 1.0 çalışır.", L"2K / 4K (experimental): PS4 Pro with 4K output; in game choose VIDEO \x2192 Favor Resolution. 720p/1080p on a big screen: Display resolution + FSR 1.0. DLSS: until the engine module arrives, FSR 1.0 runs."},
+    {L"2560x1440 (2K, deneysel)", L"2560x1440 (2K, experimental)"},
+    {L"3840x2160 (4K, deneysel)", L"3840x2160 (4K, experimental)"},
+    {L"Oyunla aynı", L"Same as game"},
+    {L"Sınırsız", L"Unlimited"},
+    {L"Mailbox (NVIDIA'da yenileme hızının 2 katıyla sınırlı)", L"Mailbox (limited to 2x the refresh rate on NVIDIA)"},
+    {L"Immediate (sınırsız, görüntü yırtılabilir)", L"Immediate (unlimited, tearing possible)"},
+    {L"Kapalı (bilinear)", L"Off (bilinear)"},
+    {L"NVIDIA DLSS 4 - Kalite", L"NVIDIA DLSS 4 - Quality"},
+    {L"NVIDIA DLSS 4 - Dengeli", L"NVIDIA DLSS 4 - Balanced"},
+    {L"NVIDIA DLSS 4 - Performans", L"NVIDIA DLSS 4 - Performance"},
+    {L"NVIDIA DLSS 4 - DLAA (doğal çözünürlük)", L"NVIDIA DLSS 4 - DLAA (native resolution)"},
+    {L"Kapalı", L"Off"},
+    {L"Düşük", L"Low"},
+    {L"Orta", L"Medium"},
+    {L"Yüksek", L"High"},
+    {L"İngilizce (ABD)", L"English (US)"},
+    {L"Fransızca", L"French"},
+    {L"Almanca", L"German"},
+    {L"İtalyanca", L"Italian"},
+    {L"İspanyolca (İspanya)", L"Spanish (Spain)"},
+    {L"İspanyolca (Latin Amerika)", L"Spanish (Latin America)"},
+    {L"Portekizce (Brezilya)", L"Portuguese (Brazil)"},
+    {L"Portekizce (Portekiz)", L"Portuguese (Portugal)"},
+    {L"Lehçe", L"Polish"},
+    {L"Rusça", L"Russian"},
+    {L"Japonca", L"Japanese"},
+    {L"Çince (Geleneksel)", L"Chinese (Traditional)"},
+    {L"Çevrimiçi oyun", L"Online play"},
+    {L"Katılma adresi", L"Join address"},
+    {L"Sunucu adresi", L"Server address"},
+    {L"IP kopyala", L"Copy IP"},
+    {L"Sunucu kuran: bu PC'nin adresini arkadaşınla paylaş (IP kopyala). Ev ağın dışında iki PC de VPN kullanmalı: bu PC'nin VPN IP'sini seç. Sunucu Oyna ile başlar, oyunla birlikte kapanır.", L"Server host: share this PC's address with your friend (Copy IP). Outside your home network both PCs must use a VPN: pick this PC's VPN IP. The server starts with Play and closes with the game."},
+    {L"Çevrimdışı", L"Offline"},
+    {L"Sunucuya katıl", L"Join server"},
+    {L"Sunucu kur", L"Host server"},
+    {L"genel", L"public"},
+    {L"sanal adaptör", L"virtual adapter"},
+    {L"Listeden bu PC'nin LAN adresini (çoğunlukla 192.168.x.x) veya ev ağının dışında oynamak için VPN adresini (Tailscale 100.x.x.x, ZeroTier) seç; Yeniden tara listeyi günceller.", L"Pick this PC's LAN address from the list (usually 192.168.x.x), or its VPN address (Tailscale 100.x.x.x, ZeroTier) to play outside your home network; Rescan refreshes the list."},
+    {L"Sunucu kur: arkadaşın için adres yok. %ls", L"Host server: no address for your friend. %ls"},
+    {L"Sunucu kur: \"%ls\" bir IPv4 adresi değil (örn. 192.168.1.20). %ls", L"Host server: \"%ls\" is not an IPv4 address (e.g. 192.168.1.20). %ls"},
+    {L"Sunucu kur: %ls yalnızca bu PC (loopback): arkadaşın ulaşamaz. %ls", L"Host server: %ls is only this PC (loopback): your friend cannot reach it. %ls"},
+    {L"Sunucu kur: %ls şu an bu PC'nin adresi değil (ağ veya VPN bağlı mı?). %ls", L"Host server: %ls is not this PC's address right now (is the network or VPN connected?). %ls"},
+    {L"Kontrolcü %d bağlı. Düğmelere bas, çubukları ve tetikleri oynat.", L"Controller %d connected. Press buttons, move the sticks and triggers."},
+    {L"Kontrolcü bulunamadı. Xbox uyumlu bir kontrolcü tak ve bir düğmeye bas.", L"No controller found. Plug in an Xbox-compatible controller and press a button."},
+    {L"Bu test XInput (Xbox uyumlu) kontrolcüleri gösterir. PS4/DualSense için Steam Input veya DS4Windows gerekir. Oyun kontrolcüyü kendi altyapısıyla okur: burada görünmeyen bir kontrolcü oyunda yine de çalışabilir. Tuş atamaları: Kütüphane sayfasında Kontroller...", L"This test shows XInput (Xbox-compatible) controllers. PS4/DualSense needs Steam Input or DS4Windows. The game reads the controller with its own stack: a controller that does not show up here may still work in the game. Key bindings: Controls... on the Library page."},
+    {L"Başlangıçta shader önbelleğini temizle", L"Clear the shader cache at start"},
+    {L"Kare istatistikleri", L"Frame statistics"},
+    {L"Vulkan doğrulama katmanı", L"Vulkan validation layer"},
+    {L"Menü girdi izleme", L"Menu input trace"},
+    {L"Shader önbelleğini temizlemek her açılışta shader'ları yeniden derler: kapalı bırak.", L"Clearing the shader cache recompiles the shaders on every start: leave it off."},
+    {L"Steam'e ekle", L"Add to Steam"},
+    {L"Steam kısayolu oyunu kayıtlı ayarlarla doğrudan başlatır. Steam kapalıyken ekle.", L"The Steam shortcut starts the game directly with the saved settings. Add it while Steam is closed."},
+    {L"Masaüstüne kısayol (launcher)", L"Desktop shortcut (launcher)"},
+    {L"Masaüstüne kısayol (doğrudan oyna)", L"Desktop shortcut (play directly)"},
+    {L"Kayıtları aç", L"Open logs"},
+    {L"Verileri aç", L"Open data"},
+    {L"Boş: veri klasöründeki kayıtlar. BB_LOG_DIR bunun önüne geçer; paylaşımlı veya ağ sürücüsü de olur.", L"Empty: the logs in the data folder. BB_LOG_DIR takes precedence; a shared or network drive works too."},
+    {L"Arayüz dili", L"Interface language"},
+    {L"Seçimin kaydedilir ve launcher her açıldığında hatırlanır. İlk açılışta İngilizce seçilidir.", L"Your choice is saved and remembered every time the launcher opens. English is selected on first launch."},
+    {L"Kontroller", L"Controls"},
+    {L"Klavye: bir tuş kutusuna tıkla, sonra tuşa bas. Kontrolcü: bir düğme seç. Klavye ve kontrolcü birlikte çalışır.", L"Keyboard: click a key box, then press a key. Controller: pick a button. Keyboard and controller work together."},
+    {L"(yok)", L"(none)"},
+    {L"Bir tuşa bas... (Esc: iptal, Delete: yok)", L"Press a key... (Esc: cancel, Delete: none)"},
+    {L"(kontrolcü: analog çubuğun kendisi)", L"(controller: the analog stick itself)"},
+    {L"Varsayılan", L"Defaults"},
+    {L"Kaydet", L"Save"},
+    {L"İptal", L"Cancel"},
+    {L"Çarpı (X)", L"Cross (X)"},
+    {L"Daire", L"Circle"},
+    {L"Kare", L"Square"},
+    {L"Üçgen", L"Triangle"},
+    {L"L3 (sol çubuğa bas)", L"L3 (press left stick)"},
+    {L"R3 (sağ çubuğa bas)", L"R3 (press right stick)"},
+    {L"Dokunmatik yüzey (sol yarı)", L"Touchpad (left half)"},
+    {L"Dokunmatik yüzey (sağ yarı)", L"Touchpad (right half)"},
+    {L"Yön tuşu yukarı", L"D-pad up"},
+    {L"Yön tuşu aşağı", L"D-pad down"},
+    {L"Yön tuşu sol", L"D-pad left"},
+    {L"Yön tuşu sağ", L"D-pad right"},
+    {L"Sol çubuk yukarı", L"Left stick up"},
+    {L"Sol çubuk aşağı", L"Left stick down"},
+    {L"Sol çubuk sol", L"Left stick left"},
+    {L"Sol çubuk sağ", L"Left stick right"},
+    {L"Sağ çubuk yukarı", L"Right stick up"},
+    {L"Sağ çubuk aşağı", L"Right stick down"},
+    {L"Sağ çubuk sol", L"Right stick left"},
+    {L"Sağ çubuk sağ", L"Right stick right"},
+    {L"A / Çarpı", L"A / Cross"},
+    {L"B / Daire", L"B / Circle"},
+    {L"X / Kare", L"X / Square"},
+    {L"Y / Üçgen", L"Y / Triangle"},
+    {L"Sol çubuğa bas", L"Press left stick"},
+    {L"Sağ çubuğa bas", L"Press right stick"},
+    {L"Dokunmatik yüzey tıkı", L"Touchpad click"},
+    {L"Oyun çalışıyor. Onu da kapatalım mı?", L"The game is running. Close it too?"},
+    {L"CreatePipe başarısız oldu", L"CreatePipe failed"},
+    {L"CreateThread başarısız oldu", L"CreateThread failed"},
+    {L"Kurulan sunucu beklenmedik şekilde durdu. Bu çevrimiçi oturum kapanacak; sunucu kaydına bak.", L"The hosted server stopped unexpectedly. This online session will close; see the server log."},
+    {L"tools\\ufc3_server.py launcher'ın yanında yok: paket eksik.", L"tools\\ufc3_server.py is missing next to the launcher: the package is incomplete."},
+    {L"Sunucu kur: Windows ağ desteği (ws2_32.dll) kullanılamıyor.", L"Host server: Windows networking (ws2_32.dll) is unavailable."},
+    {L"python\\python.exe launcher'ın yanında yok: paket eksik.", L"python\\python.exe is missing next to the launcher: the package is incomplete."},
+    {L"bin\\sacredfire-game.exe launcher'ın yanında yok: paket eksik.", L"bin\\sacredfire-game.exe is missing next to the launcher: the package is incomplete."},
+    {L"1.14 güncellemesini oyun klasörüyle birleştirme başarısız oldu (kayda bak).", L"Merging the 1.14 update into the game folder failed (see the log)."},
+    {L"Oyun denetimi başarısız oldu (kayda bak): klasör, yanında 1.14 güncellemesi (CUSA06534-patch) olan veya birleştirilmiş EA SPORTS UFC 3 CUSA06534 değil.", L"The game check failed (see the log): the folder is not EA SPORTS UFC 3 CUSA06534 with the 1.14 update (CUSA06534-patch) next to it, or merged."},
+    {L"prepare.py başarısız oldu (kayda bak)", L"prepare.py failed (see the log)"},
+    {L"link_libc.py başarısız oldu (kayda bak)", L"link_libc.py failed (see the log)"},
+    {L"link_modules.py başarısız oldu (kayda bak)", L"link_modules.py failed (see the log)"},
+    {L"gen_import_names.py başarısız oldu (kayda bak)", L"gen_import_names.py failed (see the log)"},
+    {L"content_profile.py başarısız oldu (kayda bak)", L"content_profile.py failed (see the log)"},
+    {L"patches.py başarısız oldu (kayda bak)", L"patches.py failed (see the log)"},
+    {L"Sunucuya katıl: sunucuyu kuran kişinin IP adresini gir.", L"Join server: enter the IP address of the person hosting the server."},
+    {L"BB_ONLINE_SERVER seçilen Sunucu adresinden farklı. Ortam değişkenini kaldır veya aynı yerel IP'yi seç.", L"BB_ONLINE_SERVER differs from the selected Server address. Remove the environment variable or pick the same local IP."},
+    {L"Önce Steam'i kapat: kapanırken kısayolların üzerine yazıyor. Sonra Steam'e ekle'ye tekrar bas.", L"Close Steam first: it overwrites the shortcuts when it exits. Then press Add to Steam again."},
+    {L"Steam bulunamadı (kayıt defterinde SteamPath yok).", L"Steam not found (no SteamPath in the registry)."},
+    {L"Steam kısayolu yazılamadı (kayda bak).", L"Could not write the Steam shortcut (see the log)."},
+    {L"Steam kullanıcı klasörü bulunamadı (Steam\\userdata).", L"Steam user folder not found (Steam\\userdata)."},
+    {L"Steam'e \"SacredFire\" olarak eklendi (%d eklendi, %d güncellendi). Görmek için Steam'i aç; oyunu kayıtlı ayarlarla başlatır (--play).", L"Added to Steam as \"SacredFire\" (%d added, %d updated). Open Steam to see it; it starts the game with the saved settings (--play)."},
+    {L"Masaüstü klasörü bulunamadı.", L"Desktop folder not found."},
+    {L"Kısayol oluşturulamadı (masaüstü yazılabilir mi?).", L"Could not create the shortcut (is the desktop writable?)."},
+    {L"Masaüstüne kısayol eklendi: %ls", L"Desktop shortcut added: %ls"},
+    {L"Oyun klasörü (CUSA06534; yanındaki CUSA06534-patch otomatik birleştirilir)", L"Game folder (CUSA06534; the CUSA06534-patch next to it is merged automatically)"},
+    {L"Kayıt klasörü (boş: veri klasöründeki kayıtlar)", L"Log folder (empty: the logs in the data folder)"},
+    {L"BB_DATA_DIR kullanılabilir bir yol değil", L"BB_DATA_DIR is not a usable path"},
+    {L"Oyun klasörü yok: seçmek için launcher'ı bir kez aç veya --game <klasör> kullan.", L"No game folder: open the launcher once to choose one, or use --game <folder>."},
+};
+static const wchar_t *ui_t(const wchar_t *s) {
+    if (!s || !s[0]) return s;
+    for (int i = 0; i < COUNT(i18n); ++i)
+        if (!wcscmp(s, i18n[i].tr) || !wcscmp(s, i18n[i].en)) return settings.ui_lang ? i18n[i].tr : i18n[i].en;
+    return s;
+}
 static int language_index_of(const wchar_t *id) {
     for (int i = 0; i < COUNT(language_ids); ++i) if (!wcscmp(language_ids[i], id)) return i;
     return -1;
@@ -234,6 +430,7 @@ static void settings_load(void) {
         else if (!wcscmp(line, L"log_dir")) wcsncpy(settings.log_dir, value, PATHW - 1);
         else if (!wcscmp(line, L"display")) settings.display = clampi(_wtoi(value), COUNT(display_names));
         else if (!wcscmp(line, L"language")) { const int i = language_index_of(value); if (i >= 0) settings.language = i; }
+        else if (!wcscmp(line, L"ui_language")) settings.ui_lang = !_wcsicmp(value, L"tr") ? 1 : 0;
     }
     fclose(f);
     /* A sacredfire.ini of the launcher with one "Online server" field: an address there was Join. */
@@ -243,8 +440,8 @@ static void settings_save(void) {
     wchar_t path[PATHW]; settings_path(path);
     FILE *f = _wfopen(path, L"w, ccs=UTF-8");
     if (!f) return;
-    fwprintf(f, L"player=%ls\nonline_mode=%ls\nonline_server=%ls\nhost_address=%ls\n", settings.player,
-             online_mode_ids[settings.online_mode], settings.join_address, settings.host_address);
+    fwprintf(f, L"player=%ls\nonline_mode=%ls\nonline_server=%ls\nhost_address=%ls\nui_language=%ls\n", settings.player,
+             online_mode_ids[settings.online_mode], settings.join_address, settings.host_address, settings.ui_lang ? L"tr" : L"en");
     fwprintf(f, L"game=%ls\ngamepad=%ls\nneo=%d\nfullscreen=%d\nclear_cache=%d\nvalidation=%d\nframe_stats=%d\nmenu_trace=%d\n"
                 L"resolution=%d\nfps_limit=%ls\npresent_mode=%d\nupscaler=%d\nsharpness=%d\ndisplay=%d\nskip_movies=%d\nlanguage=%ls\nlog_dir=%ls\n",
              settings.game, settings.gamepad, settings.neo, settings.fullscreen, settings.clear_cache, settings.validation,
@@ -326,7 +523,7 @@ static void logw(const wchar_t *format, ...) {
 /* Fatal before the game starts: the message in the log and a box (unless BB_NO_DIALOGS). */
 static void fail(const wchar_t *message) {
     logw(L"%ls\n", message);
-    if (!GetEnvironmentVariableW(L"BB_NO_DIALOGS", NULL, 0)) MessageBoxW(main_window, message, L"SacredFire", MB_OK | MB_ICONERROR);
+    if (!GetEnvironmentVariableW(L"BB_NO_DIALOGS", NULL, 0)) MessageBoxW(main_window, ui_t(message), L"SacredFire", MB_OK | MB_ICONERROR);
 }
 
 /* ---- running programs ---- */
@@ -530,7 +727,7 @@ static void local_addresses_refresh(void) {
             LocalAddress *l = &local_addresses[at];
             l->ip = ip; l->rank = rank;
             ip_text(ip, l->text, 16);
-            _snwprintf(l->label, 192, L"%ls  (%ls: %ls)", l->text, rank_names[rank], name); l->label[191] = 0;
+            _snwprintf(l->label, 192, L"%ls  (%ls: %ls)", l->text, ui_t(rank_names[rank]), name); l->label[191] = 0;
         }
     }
     free(list);
@@ -538,12 +735,12 @@ static void local_addresses_refresh(void) {
 /* The Host address: an IPv4 address of this PC that the friend can reach. 0 and a message to
  * show when it is not usable; a public address is allowed (a note goes to the log). */
 static int host_address_check(const wchar_t *text, uint32_t *ip, wchar_t *message, size_t n) {
-    static const wchar_t pick[] = L"Listeden bu PC'nin LAN adresini (çoğunlukla 192.168.x.x) veya ev ağının dışında oynamak için "
-                                  L"VPN adresini (Tailscale 100.x.x.x, ZeroTier) seç; Yeniden tara listeyi günceller.";
-    if (!text[0]) { _snwprintf(message, n, L"Sunucu kur: arkadaşın için adres yok. %ls", pick); message[n - 1] = 0; return 0; }
-    if (!parse_ipv4(text, ip)) { _snwprintf(message, n, L"Sunucu kur: \"%ls\" bir IPv4 adresi değil (örn. 192.168.1.20). %ls", text, pick); message[n - 1] = 0; return 0; }
+    const wchar_t *const pick = ui_t(L"Listeden bu PC'nin LAN adresini (çoğunlukla 192.168.x.x) veya ev ağının dışında oynamak için "
+                                  L"VPN adresini (Tailscale 100.x.x.x, ZeroTier) seç; Yeniden tara listeyi günceller.");
+    if (!text[0]) { _snwprintf(message, n, ui_t(L"Sunucu kur: arkadaşın için adres yok. %ls"), pick); message[n - 1] = 0; return 0; }
+    if (!parse_ipv4(text, ip)) { _snwprintf(message, n, ui_t(L"Sunucu kur: \"%ls\" bir IPv4 adresi değil (örn. 192.168.1.20). %ls"), text, pick); message[n - 1] = 0; return 0; }
     if ((*ip >> 24) == 127) {
-        _snwprintf(message, n, L"Sunucu kur: %ls yalnızca bu PC (loopback): arkadaşın ulaşamaz. %ls", text, pick); message[n - 1] = 0; return 0;
+        _snwprintf(message, n, ui_t(L"Sunucu kur: %ls yalnızca bu PC (loopback): arkadaşın ulaşamaz. %ls"), text, pick); message[n - 1] = 0; return 0;
     }
     if (!*ip || (*ip >> 28) >= 14 || (*ip >> 16) == 0xa9fe) {
         _snwprintf(message, n, L"Host server: %ls cannot be used by your friend (%ls). %ls", text,
@@ -554,7 +751,7 @@ static int host_address_check(const wchar_t *text, uint32_t *ip, wchar_t *messag
     int found = !p_GetAdaptersAddresses; /* no list on this system: the start checks it */
     for (int i = 0; i < local_address_count; ++i) found |= local_addresses[i].ip == *ip;
     if (!found) {
-        _snwprintf(message, n, L"Sunucu kur: %ls şu an bu PC'nin adresi değil (ağ veya VPN bağlı mı?). %ls", text, pick);
+        _snwprintf(message, n, ui_t(L"Sunucu kur: %ls şu an bu PC'nin adresi değil (ağ veya VPN bağlı mı?). %ls"), text, pick);
         message[n - 1] = 0; return 0;
     }
     if (!ip_private(*ip) && !ip_cgnat(*ip))
@@ -1212,14 +1409,14 @@ static void add_to_steam(void) {
     }
     if (added + replaced == 0) { fail(failed ? L"Steam kısayolu yazılamadı (kayda bak)." : L"Steam kullanıcı klasörü bulunamadı (Steam\\userdata)."); return; }
     wchar_t message[256];
-    _snwprintf(message, 256, L"Steam'e \"SacredFire\" olarak eklendi (%d eklendi, %d güncellendi). Görmek için Steam'i aç; oyunu kayıtlı ayarlarla başlatır (--play).", added, replaced);
+    _snwprintf(message, 256, ui_t(L"Steam'e \"SacredFire\" olarak eklendi (%d eklendi, %d güncellendi). Görmek için Steam'i aç; oyunu kayıtlı ayarlarla başlatır (--play)."), added, replaced);
     logw(L"%ls\n", message);
     if (!GetEnvironmentVariableW(L"BB_NO_DIALOGS", NULL, 0)) MessageBoxW(main_window, message, L"SacredFire", MB_OK | MB_ICONINFORMATION);
 }
 
 /* ---- the window ---- */
 enum { ID_GAME = 100, ID_BROWSE, ID_PLAYER, ID_LANGUAGE, ID_ONLINE, ID_MODE, ID_HOST, ID_HOSTSCAN, ID_COPYHOST, ID_GAMEPAD, ID_RESCAN, ID_CONTROLS, ID_RESOLUTION, ID_DISPLAY, ID_FPS, ID_PRESENT, ID_UPSCALER, ID_SHARPNESS, ID_SHOWFPS, ID_FULLSCREEN, ID_NEO, ID_SKIPMOVIES, ID_CLEAR, ID_VALIDATION, ID_STATS, ID_TRACE, ID_LOGDIR, ID_LOGDIR_BROWSE,
-       ID_PLAY, ID_STOP, ID_STEAM, ID_LOGS, ID_DATA, ID_LOG, ID_SHORTCUT, ID_SHORTCUT_PLAY, ID_LAST };
+       ID_PLAY, ID_STOP, ID_STEAM, ID_LOGS, ID_DATA, ID_LOG, ID_SHORTCUT, ID_SHORTCUT_PLAY, ID_UILANG, ID_LAST };
 static HWND controls[ID_LAST - 100];
 static int running;
 static float scale = 1.0f;
@@ -1235,29 +1432,30 @@ static int sx(int v) { return (int)(v * scale + 0.5f); }
  * controls, the same ids and the same sacredfire.ini / bbport.ini keys as before: only the
  * layout and the paint changed. */
 #define HEX(v) RGB(((v) >> 16) & 255, ((v) >> 8) & 255, (v) & 255)
-#define C_SIDEBAR HEX(0x101014)
-#define C_BACKGROUND HEX(0x18181C)
-#define C_CARD HEX(0x222228)
-#define C_BORDER HEX(0x30303A)
-#define C_INPUT HEX(0x2D2D35)
-#define C_LOG HEX(0x131316)
-#define C_ACCENT HEX(0x0078F2)
-#define C_ACCENT_HOT HEX(0x2D91FF)
-#define C_ACCENT_DOWN HEX(0x005FC4)
+#define C_SIDEBAR HEX(0x0B0B0B)
+#define C_BACKGROUND HEX(0x121212)
+#define C_CARD HEX(0x1B1B1B)
+#define C_BORDER HEX(0x2F2C22)
+#define C_INPUT HEX(0x262626)
+#define C_LOG HEX(0x0E0E0E)
+#define C_ACCENT HEX(0xFFC107)
+#define C_ACCENT_HOT HEX(0xFFD54F)
+#define C_ACCENT_DOWN HEX(0xD9A100)
+#define C_ACCENT_INK HEX(0x111111) /* text on a yellow face */
 #define C_TEXT HEX(0xF5F5F7)
-#define C_TEXT_DIM HEX(0xA4A4B0)
-#define C_TEXT_OFF HEX(0x666672)
+#define C_TEXT_DIM HEX(0xA8A8A8)
+#define C_TEXT_OFF HEX(0x6A6A6A)
 #define C_RED HEX(0xE5322D)
 #define C_GREEN HEX(0x3DD17A)
 enum { CLIENT_W = 1120, CLIENT_H = 700, SIDEBAR_W = 232, TITLE_H = 40, HERO_W = CLIENT_W - SIDEBAR_W, HERO_H = 390 };
-enum { PAGE_HOME, PAGE_VIDEO, PAGE_ONLINE, PAGE_GAMEPAD, PAGE_ADVANCED, PAGE_LOGS, PAGE_COUNT };
+enum { PAGE_HOME, PAGE_VIDEO, PAGE_ONLINE, PAGE_GAMEPAD, PAGE_ADVANCED, PAGE_LOGS, PAGE_LANGUAGE, PAGE_COUNT };
 enum { HOVER_NONE = -1, HOVER_PLAY = 20, HOVER_MINIMIZE, HOVER_CLOSE };
-static const wchar_t *const page_names[PAGE_COUNT] = {L"Kütüphane", L"Görüntü", L"Çevrimiçi", L"Kontrolcü", L"Gelişmiş", L"Kayıtlar"};
+static const wchar_t *const page_names[PAGE_COUNT] = {L"Kütüphane", L"Görüntü", L"Çevrimiçi", L"Kontrolcü", L"Gelişmiş", L"Kayıtlar", L"Dil"};
 /* Segoe MDL2 Assets glyphs (Windows 10 and 11). */
-static const wchar_t *const page_icons[PAGE_COUNT] = {L"\xE80F", L"\xE7F4", L"\xE774", L"\xE7FC", L"\xE713", L"\xE8A5"};
+static const wchar_t *const page_icons[PAGE_COUNT] = {L"\xE80F", L"\xE7F4", L"\xE701", L"\xE7FC", L"\xE713", L"\xE8A5", L"\xE774"};
 static const wchar_t *const page_subtitles[PAGE_COUNT] = {
     L"", L"Çözünürlük, ölçekleme ve kare hızı.", L"Arkadaşlarınla özel sunucu üzerinden oyna.", L"Kontrolcünün düğmelerini ve çubuklarını canlı dene.",
-    L"Geliştirici seçenekleri ve araçlar.", L"Oturum kayıtları ve veri klasörü."};
+    L"Geliştirici seçenekleri ve araçlar.", L"Oturum kayıtları ve veri klasörü.", L"Launcher'ın arayüz dilini seç."};
 /* The cards of each page, at 96 DPI (sx scales them). */
 static const struct { int page, x, y, w, h; const wchar_t *title; } cards[] = {
     {PAGE_HOME, 264, 414, 520, 254, L"OYUN"}, {PAGE_HOME, 800, 414, 288, 254, L"KONTROLCÜ"},
@@ -1266,7 +1464,8 @@ static const struct { int page, x, y, w, h; const wchar_t *title; } cards[] = {
     {PAGE_ONLINE, 264, 140, 520, 300, L"BAĞLANTI"}, {PAGE_ONLINE, 800, 140, 288, 300, L"NASIL ÇALIŞIR?"},
     {PAGE_GAMEPAD, 264, 140, 824, 420, L"KONTROLCÜ TESTİ"}, {PAGE_GAMEPAD, 264, 576, 824, 92, L"BİLGİ"},
     {PAGE_ADVANCED, 264, 140, 400, 260, L"GELİŞTİRİCİ SEÇENEKLERİ"}, {PAGE_ADVANCED, 688, 140, 400, 260, L"ARAÇLAR"},
-    {PAGE_LOGS, 264, 140, 824, 122, L"KAYIT KLASÖRÜ"}};
+    {PAGE_LOGS, 264, 140, 824, 122, L"KAYIT KLASÖRÜ"},
+    {PAGE_LANGUAGE, 264, 140, 520, 160, L"ARAYÜZ DİLİ"}};
 static HBRUSH brush_background, brush_card, brush_input, brush_log;
 static HFONT font_section, font_title, font_small, font_log, font_action, font_hero, font_nav, font_icon, font_caption;
 static int hot_id;                        /* the owner-drawn button under the mouse */
@@ -1284,7 +1483,7 @@ static HWND dim_text[96]; /* secondary text: labels and notes */
 static int dim_count;
 
 static HWND make(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id) {
-    HWND h_wnd = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), main_window, (HMENU)(INT_PTR)id,
+    HWND h_wnd = CreateWindowExW(0, cls, (_wcsicmp(cls, L"STATIC") && _wcsicmp(cls, L"BUTTON")) ? text : ui_t(text), WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), main_window, (HMENU)(INT_PTR)id,
                                  GetModuleHandleW(NULL), NULL);
     SendMessageW(h_wnd, WM_SETFONT, (WPARAM)ui_font, TRUE);
     if (id >= 100 && id < ID_LAST) controls[id - 100] = h_wnd;
@@ -1337,7 +1536,7 @@ static void disc(HDC dc, RECT r, COLORREF color) {
 }
 static void draw_text(HDC dc, HFONT font, COLORREF color, RECT r, UINT flags, const wchar_t *text) {
     SelectObject(dc, font); SetTextColor(dc, color); SetBkMode(dc, TRANSPARENT);
-    DrawTextW(dc, text, -1, &r, flags | DT_NOPREFIX);
+    DrawTextW(dc, ui_t(text), -1, &r, flags | DT_NOPREFIX);
 }
 
 /* ---- the hero banner of the first page ----
@@ -2469,7 +2668,7 @@ static void hero_build(const wchar_t *game) {
                 b = p[0] + bg_b * na / 255; g = p[1] + bg_g * na / 255; r = p[2] + bg_r * na / 255;
             } else {
                 const int u = x * 256 / hero_w, glow = (u * u / 256) * (256 - v) / 256; /* strongest top right */
-                r = mix(0x12, 0x1A, glow); g = mix(0x16, 0x5C, glow); b = mix(0x22, 0xC8, glow);
+                r = mix(0x14, 0xC8, glow); g = mix(0x12, 0x98, glow); b = mix(0x0A, 0x00, glow);
             }
             const int lx = x * 1000 / hero_w;
             const int a_left = 24 + (lx < 700 ? (left_max - 24) * (700 - lx) / 700 : 0);
@@ -2504,7 +2703,7 @@ static void hero_build(const wchar_t *game) {
 static void fill_gamepads(void) {
     HWND combo = control(ID_GAMEPAD);
     SendMessageW(combo, CB_RESETCONTENT, 0, 0);
-    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)L"Herhangi bir kontrolcü (veya klavye)");
+    SendMessageW(combo, CB_ADDSTRING, 0, (LPARAM)ui_t(L"Herhangi bir kontrolcü (veya klavye)"));
     int selected = 0;
     for (int i = 0; i < gamepad_count; ++i) {
         wchar_t label[256]; _snwprintf(label, 256, L"%ls  [%.8ls]", gamepads[i].name, gamepads[i].guid); label[255] = 0;
@@ -2549,8 +2748,8 @@ enum { ID_CTL_KEY = 2000, ID_CTL_PAD = 2100, ID_CTL_SAVE = 2200, ID_CTL_DEFAULTS
 
 static void ctl_show_key(int row) {
     wchar_t text[96];
-    if (ctl_capture == row) wcscpy(text, L"Bir tuşa bas... (Esc: iptal, Delete: yok)");
-    else if (!ctl_keys[row][0]) wcscpy(text, L"(yok)");
+    if (ctl_capture == row) wcscpy(text, ui_t(L"Bir tuşa bas... (Esc: iptal, Delete: yok)"));
+    else if (!ctl_keys[row][0]) wcscpy(text, ui_t(L"(yok)"));
     else { MultiByteToWideChar(CP_UTF8, 0, ctl_keys[row], -1, text, 96); }
     SetWindowTextW(ctl_key_buttons[row], text);
 }
@@ -2665,13 +2864,13 @@ static void draw_button(const DRAWITEMSTRUCT *d) {
     if (!in_controls && id >= 100 && id < ID_LAST && is_check[id - 100]) { /* a switch */
         const int on = check_state[id - 100], track_w = sx(36), track_h = sx(20), top = r.top + (r.bottom - r.top - track_h) / 2;
         const RECT track = {r.left, top, r.left + track_w, top + track_h};
-        const COLORREF color = !enabled ? C_BORDER : on ? (hot ? C_ACCENT_HOT : C_ACCENT) : (hot ? HEX(0x5C5C68) : HEX(0x4A4A55));
+        const COLORREF color = !enabled ? C_BORDER : on ? (hot ? C_ACCENT_HOT : C_ACCENT) : (hot ? HEX(0x5E5E5E) : HEX(0x4A4A4A));
         round_rect(dc, track, color, color, track_h / 2);
         const int knob = track_h - sx(6), knob_x = on ? track.right - sx(3) - knob : track.left + sx(3);
         const RECT dot = {knob_x, top + sx(3), knob_x + knob, top + sx(3) + knob};
         disc(dc, dot, enabled ? C_TEXT : C_TEXT_OFF);
         RECT t = r; t.left = track.right + sx(12);
-        draw_text(dc, ui_font, !enabled ? C_TEXT_OFF : hot ? C_TEXT : HEX(0xDADAE0), t, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS, text);
+        draw_text(dc, ui_font, !enabled ? C_TEXT_OFF : hot ? C_TEXT : HEX(0xE0E0E0), t, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS, text);
         if (focus) {
             RECT f = t; DrawTextW(dc, text, -1, &f, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_CALCRECT);
             OffsetRect(&f, 0, (r.bottom - r.top - (f.bottom - f.top)) / 2 - (f.top - r.top)); InflateRect(&f, sx(2), 0); DrawFocusRect(dc, &f);
@@ -2680,19 +2879,19 @@ static void draw_button(const DRAWITEMSTRUCT *d) {
     }
     COLORREF face, border, ink; HFONT font = ui_font; int radius = sx(8);
     if (id == ID_PLAY || id == ID_CTL_SAVE) {
-        face = !enabled ? HEX(0x1B3A5E) : pressed ? C_ACCENT_DOWN : hot ? C_ACCENT_HOT : C_ACCENT; border = face;
-        ink = enabled ? HEX(0xFFFFFF) : C_TEXT_DIM;
+        face = !enabled ? HEX(0x4A3A08) : pressed ? C_ACCENT_DOWN : hot ? C_ACCENT_HOT : C_ACCENT; border = face;
+        ink = enabled ? C_ACCENT_INK : C_TEXT_DIM;
         if (id == ID_PLAY) { font = font_action; radius = sx(10); }
     } else if (id == ID_STOP) {
-        face = !enabled ? HEX(0x1E1E24) : pressed ? HEX(0x3A0F10) : hot ? HEX(0x2E1214) : HEX(0x241214);
+        face = !enabled ? HEX(0x1C1C1C) : pressed ? HEX(0x3A0F10) : hot ? HEX(0x2E1214) : HEX(0x241214);
         border = enabled ? C_RED : C_BORDER; ink = enabled ? HEX(0xFF6B66) : C_TEXT_OFF; font = font_action; radius = sx(10);
     } else if (in_controls && id >= ID_CTL_KEY && id < ID_CTL_KEY + CTL_INPUTS) { /* a key box: blue while it waits for a key */
         const int waiting = ctl_capture == id - ID_CTL_KEY;
-        face = pressed ? HEX(0x26262D) : hot ? HEX(0x3A3A44) : C_INPUT; border = waiting ? C_ACCENT_HOT : hot ? HEX(0x55555F) : HEX(0x3E3E48);
+        face = pressed ? HEX(0x262626) : hot ? HEX(0x3D3D3D) : C_INPUT; border = waiting ? C_ACCENT_HOT : hot ? HEX(0x585858) : HEX(0x444444);
         ink = waiting ? C_ACCENT_HOT : C_TEXT;
     } else {
-        face = !enabled ? C_CARD : pressed ? HEX(0x26262D) : hot ? HEX(0x3E3E49) : HEX(0x33333C);
-        border = !enabled ? C_BORDER : hot ? HEX(0x5A5A66) : HEX(0x3E3E48); ink = !enabled ? C_TEXT_OFF : C_TEXT;
+        face = !enabled ? C_CARD : pressed ? HEX(0x262626) : hot ? HEX(0x424242) : HEX(0x333333);
+        border = !enabled ? C_BORDER : hot ? HEX(0x5C5C5C) : HEX(0x444444); ink = !enabled ? C_TEXT_OFF : C_TEXT;
     }
     round_rect(dc, r, face, border, radius);
     draw_text(dc, font, ink, r, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_END_ELLIPSIS, text);
@@ -2743,7 +2942,7 @@ static HWND edit(const wchar_t *text, int x, int y, int w, int id) {
 
 /* ---- the Controls window: the same rows, in the same dark look ---- */
 static HWND ctl_make(const wchar_t *cls, const wchar_t *text, DWORD style, int x, int y, int w, int h, int id) {
-    HWND h_wnd = CreateWindowExW(0, cls, text, WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), ctl_window,
+    HWND h_wnd = CreateWindowExW(0, cls, (_wcsicmp(cls, L"STATIC") && _wcsicmp(cls, L"BUTTON")) ? text : ui_t(text), WS_CHILD | WS_VISIBLE | style, sx(x), sx(y), sx(w), sx(h), ctl_window,
                                  (HMENU)(INT_PTR)id, GetModuleHandleW(NULL), NULL);
     SendMessageW(h_wnd, WM_SETFONT, (WPARAM)ui_font, TRUE);
     return h_wnd;
@@ -2795,7 +2994,7 @@ static void controls_open(void) {
     const int rows_h = 24, top = 52, client_w = 660, client_h = top + CTL_INPUTS * rows_h + 64;
     RECT r = {0, 0, sx(client_w), sx(client_h)};
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
-    ctl_window = CreateWindowExW(WS_EX_DLGMODALFRAME, L"UFC3NativeControls", L"Kontroller", WS_CAPTION | WS_SYSMENU | WS_POPUP,
+    ctl_window = CreateWindowExW(WS_EX_DLGMODALFRAME, L"UFC3NativeControls", ui_t(L"Kontroller"), WS_CAPTION | WS_SYSMENU | WS_POPUP,
                                  CW_USEDEFAULT, CW_USEDEFAULT, r.right - r.left, r.bottom - r.top, main_window, NULL,
                                  GetModuleHandleW(NULL), NULL);
     if (!ctl_window) return;
@@ -2810,7 +3009,7 @@ static void controls_open(void) {
             ctl_pad_combos[i] = ctl_make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 442, y, 202, 300, ID_CTL_PAD + i);
             dark_theme(ctl_pad_combos[i], L"DarkMode_CFD");
             SendMessageW(ctl_pad_combos[i], CB_SETITEMHEIGHT, (WPARAM)-1, sx(16));
-            for (int k = 0; k < COUNT(ctl_pad_labels); ++k) SendMessageW(ctl_pad_combos[i], CB_ADDSTRING, 0, (LPARAM)ctl_pad_labels[k]);
+            for (int k = 0; k < COUNT(ctl_pad_labels); ++k) SendMessageW(ctl_pad_combos[i], CB_ADDSTRING, 0, (LPARAM)ui_t(ctl_pad_labels[k]));
         } else ctl_make(L"STATIC", L"(kontrolcü: analog çubuğun kendisi)", SS_CENTERIMAGE | SS_NOPREFIX, 442, y, 202, 22, 0);
     }
     const int by = top + CTL_INPUTS * rows_h + 16;
@@ -2894,6 +3093,54 @@ static void read_controls(void) {
     ini_set("show_fps", show_fps ? "1" : "0"); /* written always: the game's own default is off */
     settings.show_fps = show_fps;
     settings_save();
+}
+/* The choice lists of the window (names in the chosen interface language). from_settings: select what the settings say
+ * (start); otherwise keep what each list shows now (the interface language changed). */
+static void ui_combos_fill(int from_settings) {
+    const struct { int id, count, selected; const wchar_t *const *names; } combos[] = {
+        {ID_RESOLUTION, COUNT(resolution_names), settings.resolution, resolution_names},
+        {ID_DISPLAY, COUNT(display_names), settings.display, display_names},
+        {ID_FPS, COUNT(fps_names), settings.fps_mode, fps_names},
+        {ID_PRESENT, COUNT(present_names), settings.present_mode, present_names},
+        {ID_UPSCALER, COUNT(upscaler_names), settings.upscaler, upscaler_names},
+        {ID_SHARPNESS, COUNT(sharpness_names), settings.sharpness, sharpness_names},
+        {ID_MODE, COUNT(online_mode_names), settings.online_mode, online_mode_names},
+        {ID_LANGUAGE, COUNT(language_names), settings.language, language_names},
+    };
+    for (int c = 0; c < COUNT(combos); ++c) {
+        HWND box = control(combos[c].id);
+        int selected = combos[c].selected;
+        if (!from_settings) { const int now = (int)SendMessageW(box, CB_GETCURSEL, 0, 0); if (now >= 0) selected = now; }
+        SendMessageW(box, CB_RESETCONTENT, 0, 0);
+        for (int i = 0; i < combos[c].count; ++i) SendMessageW(box, CB_ADDSTRING, 0, (LPARAM)ui_t(combos[c].names[i]));
+        SendMessageW(box, CB_SETCURSEL, selected, 0);
+    }
+}
+/* The interface language changed: every label, button, list and the window title follow at once. */
+static void ui_language_apply(void) {
+    for (int i = 0; i < page_child_count; ++i) {
+        HWND w = page_children[i].window; wchar_t cls[16] = L"";
+        GetClassNameW(w, cls, COUNT(cls));
+        if (_wcsicmp(cls, L"Static") && _wcsicmp(cls, L"Button")) continue;
+        wchar_t text[512]; GetWindowTextW(w, text, COUNT(text));
+        const wchar_t *t = ui_t(text);
+        if (wcscmp(t, text)) SetWindowTextW(w, t);
+    }
+    ui_combos_fill(0);
+    fill_gamepads();
+    if (!running) fill_host_addresses();
+#if !defined(UFC3_WRITE_WINDOWS_TEST) && !defined(UFC3_DIAGNOSTIC_PACKAGE)
+    SetWindowTextW(main_window, ui_t(L"EA SPORTS UFC 3 - yerel PC portu"));
+#endif
+    RedrawWindow(main_window, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
+}
+static void ui_language_changed(void) {
+    const int sel = (int)SendMessageW(control(ID_UILANG), CB_GETCURSEL, 0, 0);
+    if (sel < 0 || sel > 1 || sel == settings.ui_lang) return;
+    if (!running) read_controls(); /* keeps what the other lists show; also saves the ini */
+    settings.ui_lang = sel;
+    settings_save(); /* the choice is remembered at the next start */
+    ui_language_apply();
 }
 static int pick_folder(const wchar_t *title, wchar_t *out_path) {
     int ok = 0;
@@ -2988,34 +3235,34 @@ static int pad_update(int force) {
 }
 static void pad_key(HDC dc, int x, int y, int w, int h, int on, const wchar_t *text) {
     const RECT r = {sx(x), sx(y), sx(x + w), sx(y + h)};
-    const COLORREF face = on ? C_ACCENT : HEX(0x34343C);
+    const COLORREF face = on ? C_ACCENT : HEX(0x333333);
     round_rect(dc, r, face, face, sx(6));
-    draw_text(dc, font_small, on ? HEX(0xFFFFFF) : C_TEXT_DIM, r, DT_SINGLELINE | DT_CENTER | DT_VCENTER, text);
+    draw_text(dc, font_small, on ? C_ACCENT_INK : C_TEXT_DIM, r, DT_SINGLELINE | DT_CENTER | DT_VCENTER, text);
 }
 static void pad_round(HDC dc, int cx, int cy, int r, int on, const wchar_t *text) {
     const RECT b = {sx(cx - r), sx(cy - r), sx(cx + r), sx(cy + r)};
-    disc(dc, b, on ? C_ACCENT : HEX(0x34343C));
-    draw_text(dc, font_small, on ? HEX(0xFFFFFF) : C_TEXT_DIM, b, DT_SINGLELINE | DT_CENTER | DT_VCENTER, text);
+    disc(dc, b, on ? C_ACCENT : HEX(0x333333));
+    draw_text(dc, font_small, on ? C_ACCENT_INK : C_TEXT_DIM, b, DT_SINGLELINE | DT_CENTER | DT_VCENTER, text);
 }
 static void pad_bar(HDC dc, int x, int y, int w, int h, int value, const wchar_t *text) {
     const RECT r = {sx(x), sx(y), sx(x + w), sx(y + h)};
-    round_rect(dc, r, HEX(0x34343C), HEX(0x34343C), sx(5));
+    round_rect(dc, r, HEX(0x333333), HEX(0x333333), sx(5));
     if (value > 0) { RECT f = r; f.right = r.left + (r.right - r.left) * value / 255; round_rect(dc, f, C_ACCENT, C_ACCENT, sx(5)); }
     draw_text(dc, font_small, C_TEXT, r, DT_SINGLELINE | DT_CENTER | DT_VCENTER, text);
 }
 static void pad_stick(HDC dc, int cx, int cy, int radius, int x, int y, int pressed) {
     const RECT ring = {sx(cx - radius), sx(cy - radius), sx(cx + radius), sx(cy + radius)};
-    disc(dc, ring, HEX(0x2B2B33));
+    disc(dc, ring, HEX(0x2A2A2A));
     const int travel = radius - 16, dx = x * travel / 32768, dy = -y * travel / 32768;
     const int moved = x > 6000 || x < -6000 || y > 6000 || y < -6000;
     const RECT dot = {sx(cx + dx - 16), sx(cy + dy - 16), sx(cx + dx + 16), sx(cy + dy + 16)};
-    disc(dc, dot, pressed ? C_ACCENT_HOT : moved ? C_ACCENT : HEX(0x4C4C58));
+    disc(dc, dot, pressed ? C_ACCENT_HOT : moved ? C_ACCENT : HEX(0x4E4E4E));
 }
 static void paint_gamepad(HDC dc) {
     const XPadGamepad *g = &pad_shown.Gamepad; const int b = g->wButtons;
     wchar_t status[160];
-    if (pad_shown_slot >= 0) _snwprintf(status, 160, L"Kontrolcü %d bağlı. Düğmelere bas, çubukları ve tetikleri oynat.", pad_shown_slot + 1);
-    else _snwprintf(status, 160, L"Kontrolcü bulunamadı. Xbox uyumlu bir kontrolcü tak ve bir düğmeye bas.");
+    if (pad_shown_slot >= 0) _snwprintf(status, 160, ui_t(L"Kontrolcü %d bağlı. Düğmelere bas, çubukları ve tetikleri oynat."), pad_shown_slot + 1);
+    else _snwprintf(status, 160, ui_t(L"Kontrolcü bulunamadı. Xbox uyumlu bir kontrolcü tak ve bir düğmeye bas."));
     status[159] = 0;
     draw_text(dc, ui_font, pad_shown_slot >= 0 ? C_GREEN : C_TEXT_DIM, (RECT){sx(284), sx(172), sx(1068), sx(198)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, status);
     pad_bar(dc, 300, 214, 130, 20, g->bLeftTrigger, L"LT"); pad_key(dc, 300, 242, 130, 24, b & 0x100, L"LB");
@@ -3085,7 +3332,7 @@ static void paint_sidebar(HDC dc, int height) {
     /* The pages. */
     for (int i = 0; i < PAGE_COUNT; ++i) {
         const RECT n = nav_rect(i); const int selected = i == current_page, hover = hover_item == i;
-        if (selected || hover) round_rect(dc, n, selected ? HEX(0x26262E) : HEX(0x1B1B21), selected ? HEX(0x26262E) : HEX(0x1B1B21), sx(8));
+        if (selected || hover) round_rect(dc, n, selected ? HEX(0x262626) : HEX(0x1A1A1A), selected ? HEX(0x262626) : HEX(0x1A1A1A), sx(8));
         if (selected) fill(dc, (RECT){n.left, n.top + sx(11), n.left + sx(3), n.bottom - sx(11)}, C_ACCENT);
         draw_text(dc, font_icon, selected ? C_ACCENT_HOT : hover ? C_TEXT : C_TEXT_DIM, (RECT){n.left + sx(14), n.top, n.left + sx(42), n.bottom},
                   DT_SINGLELINE | DT_CENTER | DT_VCENTER, page_icons[i]);
@@ -3100,7 +3347,7 @@ static void paint_sidebar(HDC dc, int height) {
     } else {
         const COLORREF face = hover_play ? C_ACCENT_HOT : C_ACCENT;
         round_rect(dc, play, face, face, sx(10));
-        draw_text(dc, font_action, HEX(0xFFFFFF), play, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"OYNA");
+        draw_text(dc, font_action, C_ACCENT_INK, play, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"OYNA");
     }
     /* The player. */
     wchar_t name[40]; GetWindowTextW(control(ID_PLAYER), name, COUNT(name));
@@ -3109,10 +3356,10 @@ static void paint_sidebar(HDC dc, int height) {
     const RECT avatar = {sx(20), height - sx(92), sx(56), height - sx(56)};
     disc(dc, avatar, C_ACCENT);
     wchar_t initial[2] = {(wchar_t)towupper(name[0]), 0};
-    draw_text(dc, font_nav, HEX(0xFFFFFF), avatar, DT_SINGLELINE | DT_CENTER | DT_VCENTER, initial);
+    draw_text(dc, font_nav, C_ACCENT_INK, avatar, DT_SINGLELINE | DT_CENTER | DT_VCENTER, initial);
     draw_text(dc, font_nav, C_TEXT, (RECT){sx(68), avatar.top - sx(2), side_w - sx(12), avatar.top + sx(18)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, name);
     draw_text(dc, font_small, C_TEXT_DIM, (RECT){sx(68), avatar.top + sx(18), side_w - sx(12), avatar.top + sx(38)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, online_mode_names[mode]);
-    wchar_t version[80]; _snwprintf(version, 80, L"Sürüm %hs", version_text); version[79] = 0;
+    wchar_t version[80]; _snwprintf(version, 80, ui_t(L"Sürüm %hs"), version_text); version[79] = 0;
     draw_text(dc, font_small, C_TEXT_OFF, (RECT){sx(20), height - sx(40), side_w - sx(12), height - sx(16)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER, version);
 }
 static void paint_window(HDC dc, RECT client) {
@@ -3128,7 +3375,7 @@ static void paint_window(HDC dc, RECT client) {
         }
         const int hx = side_w + sx(40);
         /* the EA SPORTS UFC 3 logo is part of the banner bitmap (hero_build) */
-        wchar_t line[160]; _snwprintf(line, 160, L"Yerel PC portu  \x00B7  PS4 CUSA06534  \x00B7  v%hs", version_text); line[159] = 0;
+        wchar_t line[160]; _snwprintf(line, 160, ui_t(L"Yerel PC portu  \x00B7  PS4 CUSA06534  \x00B7  v%hs"), version_text); line[159] = 0;
         draw_text(dc, ui_font, C_TEXT_DIM, (RECT){hx, sx(208), width - sx(40), sx(234)}, DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS, line);
         const RECT dot = {hx, sx(332), hx + sx(10), sx(342)};
         disc(dc, dot, status_kind == 1 ? C_ACCENT_HOT : status_kind == 2 ? C_RED : C_GREEN);
@@ -3154,7 +3401,7 @@ static void paint_window(HDC dc, RECT client) {
     paint_sidebar(dc, height);
     /* The window buttons (the window has no title bar of its own). */
     const RECT minimize = minimize_rect(), close = close_rect();
-    if (hover_item == HOVER_MINIMIZE) fill(dc, minimize, HEX(0x34343C));
+    if (hover_item == HOVER_MINIMIZE) fill(dc, minimize, HEX(0x333333));
     if (hover_item == HOVER_CLOSE) fill(dc, close, HEX(0xE81123));
     draw_text(dc, font_caption, C_TEXT, minimize, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"\xE921");
     draw_text(dc, font_caption, C_TEXT, close, DT_SINGLELINE | DT_CENTER | DT_VCENTER, L"\xE8BB");
@@ -3174,7 +3421,7 @@ static void make_shortcut(int play_now) {
     if (SUCCEEDED(CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkW, (void **)&link))) {
         link->lpVtbl->SetPath(link, self);
         link->lpVtbl->SetWorkingDirectory(link, root);
-        link->lpVtbl->SetDescription(link, L"EA SPORTS UFC 3 - yerel PC portu");
+        link->lpVtbl->SetDescription(link, ui_t(L"EA SPORTS UFC 3 - yerel PC portu"));
         link->lpVtbl->SetIconLocation(link, self, 0);
         if (play_now) link->lpVtbl->SetArguments(link, L"--play");
         if (SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPersistFile, (void **)&file))) {
@@ -3185,7 +3432,7 @@ static void make_shortcut(int play_now) {
     }
     if (!ok) { fail(L"Kısayol oluşturulamadı (masaüstü yazılabilir mi?)."); return; }
     wchar_t message[PATHW + 64];
-    _snwprintf(message, COUNT(message), L"Masaüstüne kısayol eklendi: %ls", path); message[COUNT(message) - 1] = 0;
+    _snwprintf(message, COUNT(message), ui_t(L"Masaüstüne kısayol eklendi: %ls"), path); message[COUNT(message) - 1] = 0;
     logw(L"%ls\n", message);
     if (!GetEnvironmentVariableW(L"BB_NO_DIALOGS", NULL, 0)) MessageBoxW(main_window, message, L"SacredFire", MB_OK | MB_ICONINFORMATION);
 }
@@ -3238,7 +3485,8 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
             return 0;
         }
         if (code == BN_DOUBLECLICKED) return 0;
-        if (id == ID_RESOLUTION && code == CBN_SELCHANGE) video_controls();
+        if (id == ID_UILANG && code == CBN_SELCHANGE) ui_language_changed();
+        else if (id == ID_RESOLUTION && code == CBN_SELCHANGE) video_controls();
         else if (id == ID_GAME && code == EN_KILLFOCUS) {
             wchar_t folder[PATHW]; GetWindowTextW(control(ID_GAME), folder, PATHW); trimw(folder);
             hero_build(folder); RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
@@ -3247,13 +3495,13 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         else if (id == ID_MODE && code == CBN_SELCHANGE) { online_controls(); invalidate_chrome(); }
         else if (id == ID_HOSTSCAN && !running) fill_host_addresses();
         else if (id == ID_COPYHOST) copy_host_address();
-        else if (id == ID_BROWSE) { wchar_t folder[PATHW]; if (pick_folder(L"Oyun klasörü (CUSA06534; yanındaki CUSA06534-patch otomatik birleştirilir)", folder)) {
+        else if (id == ID_BROWSE) { wchar_t folder[PATHW]; if (pick_folder(ui_t(L"Oyun klasörü (CUSA06534; yanındaki CUSA06534-patch otomatik birleştirilir)"), folder)) {
             SetWindowTextW(control(ID_GAME), folder);
             hero_build(folder); RedrawWindow(window, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
         } }
         else if (id == ID_LOGDIR_BROWSE && !running) {
             wchar_t folder[PATHW];
-            if (pick_folder(L"Kayıt klasörü (boş: veri klasöründeki kayıtlar)", folder)) {
+            if (pick_folder(ui_t(L"Kayıt klasörü (boş: veri klasöründeki kayıtlar)"), folder)) {
                 SetWindowTextW(control(ID_LOGDIR), folder);
                 wcsncpy(settings.log_dir, folder, PATHW - 1); settings.log_dir[PATHW - 1] = 0;
                 settings_save();
@@ -3332,7 +3580,7 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
     case WM_CTLCOLORBTN: return (LRESULT)brush_card;
     case WM_CTLCOLORSTATIC: case WM_CTLCOLOREDIT: case WM_CTLCOLORLISTBOX: {
         HDC dc = (HDC)wparam; HWND child = (HWND)lparam;
-        if (child == log_edit) { SetTextColor(dc, HEX(0xD4D4DA)); SetBkColor(dc, C_LOG); return (LRESULT)brush_log; }
+        if (child == log_edit) { SetTextColor(dc, HEX(0xD6D6D6)); SetBkColor(dc, C_LOG); return (LRESULT)brush_log; }
         wchar_t cls[16] = L""; GetClassNameW(child, cls, COUNT(cls));
         /* Edits, lists and combo boxes (a disabled or read-only edit asks with WM_CTLCOLORSTATIC). */
         if (message != WM_CTLCOLORSTATIC || !_wcsicmp(cls, L"Edit") || !_wcsicmp(cls, L"ComboBox")) {
@@ -3345,8 +3593,8 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
     case WM_APP_DONE:
         if (wparam == 0 || wparam == 130) { wcscpy(status_text, wparam == 0 ? L"Oyun kapandı" : L"Durduruldu"); status_kind = 0; }
         else {
-            if (wparam >= 0x80000000u) _snwprintf(status_text, COUNT(status_text), L"Oyun 0x%08lX koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", (unsigned long)wparam);
-            else _snwprintf(status_text, COUNT(status_text), L"Oyun %lu koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak.", (unsigned long)wparam);
+            if (wparam >= 0x80000000u) _snwprintf(status_text, COUNT(status_text), ui_t(L"Oyun 0x%08lX koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak."), (unsigned long)wparam);
+            else _snwprintf(status_text, COUNT(status_text), ui_t(L"Oyun %lu koduyla kapandı. Ayrıntı için Kayıtlar sayfasına bak."), (unsigned long)wparam);
             status_text[COUNT(status_text) - 1] = 0; status_kind = 2;
         }
         set_running(0);
@@ -3354,7 +3602,7 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
         return 0;
     case WM_CLOSE:
         if (running) {
-            if (MessageBoxW(window, L"Oyun çalışıyor. Onu da kapatalım mı?", L"SacredFire", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
+            if (MessageBoxW(window, ui_t(L"Oyun çalışıyor. Onu da kapatalım mı?"), L"SacredFire", MB_YESNO | MB_ICONQUESTION) != IDYES) return 0;
             InterlockedExchange(&stop_requested, 1); server_kill();
             if (game_process) TerminateProcess(game_process, 1);
         }
@@ -3402,7 +3650,7 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
 #elif defined(UFC3_DIAGNOSTIC_PACKAGE)
     const wchar_t *window_title = L"EA SPORTS UFC 3 - native PC port (Windows diagnostic test)";
 #else
-    const wchar_t *window_title = L"EA SPORTS UFC 3 - yerel PC portu";
+    const wchar_t *window_title = ui_t(L"EA SPORTS UFC 3 - yerel PC portu");
 #endif
     main_window = CreateWindowExW(WS_EX_APPWINDOW, wc.lpszClassName, window_title, style, left < work.left ? work.left : left, top < work.top ? work.top : top,
                                   client_w, client_h, NULL, NULL, instance, NULL);
@@ -3471,6 +3719,10 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
     note(L"Steam kısayolu oyunu kayıtlı ayarlarla doğrudan başlatır. Steam kapalıyken ekle.", 708, 240, 360, 40);
     button(L"Masaüstüne kısayol (launcher)", 708, 292, 360, 36, ID_SHORTCUT);
     button(L"Masaüstüne kısayol (doğrudan oyna)", 708, 336, 360, 36, ID_SHORTCUT_PLAY);
+    /* DİL */
+    build_page = PAGE_LANGUAGE;
+    label(L"Arayüz dili", 284, 188, 480); combo(284, 208, 480, ID_UILANG, 0);
+    note(L"Seçimin kaydedilir ve launcher her açıldığında hatırlanır. İlk açılışta İngilizce seçilidir.", 284, 252, 480, 36);
     /* KAYITLAR */
     build_page = PAGE_LOGS;
     edit(settings.log_dir, 284, 184, 476, ID_LOGDIR);
@@ -3483,22 +3735,10 @@ static int gui(HINSTANCE instance, const wchar_t *const *extra, int extra_count)
     SendMessageW(log_edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(sx(8), sx(8)));
     dark_theme(log_edit, L"DarkMode_Explorer");
     SendMessageW(log_edit, EM_SETLIMITTEXT, 0, 0);
-    {
-        const struct { int id, count, selected; const wchar_t *const *names; } combos[] = {
-            {ID_RESOLUTION, COUNT(resolution_names), settings.resolution, resolution_names},
-            {ID_DISPLAY, COUNT(display_names), settings.display, display_names},
-            {ID_FPS, COUNT(fps_names), settings.fps_mode, fps_names},
-            {ID_PRESENT, COUNT(present_names), settings.present_mode, present_names},
-            {ID_UPSCALER, COUNT(upscaler_names), settings.upscaler, upscaler_names},
-            {ID_SHARPNESS, COUNT(sharpness_names), settings.sharpness, sharpness_names},
-            {ID_MODE, COUNT(online_mode_names), settings.online_mode, online_mode_names},
-            {ID_LANGUAGE, COUNT(language_names), settings.language, language_names},
-        };
-        for (int c = 0; c < COUNT(combos); ++c) {
-            for (int i = 0; i < combos[c].count; ++i) SendMessageW(control(combos[c].id), CB_ADDSTRING, 0, (LPARAM)combos[c].names[i]);
-            SendMessageW(control(combos[c].id), CB_SETCURSEL, combos[c].selected, 0);
-        }
-    }
+    ui_combos_fill(1);
+    SendMessageW(control(ID_UILANG), CB_ADDSTRING, 0, (LPARAM)L"English");
+    SendMessageW(control(ID_UILANG), CB_ADDSTRING, 0, (LPARAM)L"Türkçe");
+    SendMessageW(control(ID_UILANG), CB_SETCURSEL, settings.ui_lang, 0);
     neo_user = settings.neo;
     set_checked(ID_SHOWFPS, settings.show_fps); set_checked(ID_FULLSCREEN, settings.fullscreen); set_checked(ID_NEO, settings.neo); set_checked(ID_SKIPMOVIES, settings.skip_movies); set_checked(ID_CLEAR, settings.clear_cache);
     set_checked(ID_STATS, settings.frame_stats); set_checked(ID_VALIDATION, settings.validation); set_checked(ID_TRACE, settings.menu_trace);
